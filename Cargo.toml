@@ -1,0 +1,14 @@
+[package]
+name = "c2rust_idiomatizer"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "c2rust_idiomatizer"
+crate-type = ["dylib"]
+
+[dependencies]
+c2rust-refactor = { path = "../c2rust/c2rust-refactor" }
+
+[package.metadata.rust-analyzer]
+rustc_private = true
