@@ -12,20 +12,9 @@ use rustc_ast::{Crate, ItemKind, PathSegment, Ty, TyKind};
 use rustc_span::symbol::{Ident, Symbol};
 
 #[derive(Clone, Debug)]
-struct Platform {
+struct BitWidths {
     c_int_bits: u32,
-    pointer_bits: u32,
-    windows_llp64: bool,
-}
-
-impl Platform {
-    fn c_long_bits(&self) -> u32 {
-        if self.windows_llp64 {
-            32
-        } else {
-            self.pointer_bits
-        }
-    }
+    c_long_bits: u32,
 }
 
 fn rust_int(bits: u32, signed: bool) -> &'static str {
@@ -42,7 +31,7 @@ fn rust_int(bits: u32, signed: bool) -> &'static str {
     }
 }
 
-fn replacement_for_type_name(name: &str, platform: &Platform) -> Option<&'static str> {
+fn replacement_for_type_name(name: &str, bit_widths: &BitWidths) -> Option<&'static str> {
     match name {
         "__int8_t" | "int8_t" => Some("i8"),
         "__uint8_t" | "uint8_t" => Some("u8"),
@@ -62,11 +51,11 @@ fn replacement_for_type_name(name: &str, platform: &Platform) -> Option<&'static
         "c_short" => Some("i16"),
         "c_ushort" => Some("u16"),
 
-        "c_int" => Some(rust_int(platform.c_int_bits, true)),
-        "c_uint" => Some(rust_int(platform.c_int_bits, false)),
+        "c_int" => Some(rust_int(bit_widths.c_int_bits, true)),
+        "c_uint" => Some(rust_int(bit_widths.c_int_bits, false)),
 
-        "c_long" => Some(rust_int(platform.c_long_bits(), true)),
-        "c_ulong" => Some(rust_int(platform.c_long_bits(), false)),
+        "c_long" => Some(rust_int(bit_widths.c_long_bits, true)),
+        "c_ulong" => Some(rust_int(bit_widths.c_long_bits, false)),
 
         "c_longlong" => Some("i64"),
         "c_ulonglong" => Some("u64"),
@@ -105,7 +94,7 @@ fn set_path_to_single_ident(path: &mut rustc_ast::Path, name: &str) {
 }
 
 struct ReplaceIntegers {
-    platform: Platform,
+    bit_widths: BitWidths,
 }
 
 impl MutVisitor for ReplaceIntegers {
@@ -124,7 +113,7 @@ impl MutVisitor for ReplaceIntegers {
             let last = path.segments.last().map(|s| s.ident.name.to_string());
 
             if let Some(last) = last {
-                if let Some(replacement) = replacement_for_type_name(&last, &self.platform) {
+                if let Some(replacement) = replacement_for_type_name(&last, &self.bit_widths) {
                     *qself = None;
                     set_path_to_single_ident(path, replacement);
                     return;
@@ -136,8 +125,8 @@ impl MutVisitor for ReplaceIntegers {
     }
 }
 
-fn replace_integers(krate: &mut Crate, platform: Platform) {
-    let mut visitor = ReplaceIntegers { platform };
+fn replace_integers(krate: &mut Crate, bit_widths: BitWidths) {
+    let mut visitor = ReplaceIntegers { bit_widths };
     visitor.visit_crate(krate);
 }
 
@@ -146,19 +135,21 @@ pub fn register_commands(reg: &mut Registry) {
     reg.register("replace_integers", |_args| {
         Box::new(DriverCommand::new(Phase::Phase1, |st, cx| {
             let target = &cx.session().target;
-
             let c_int_bits = target.c_int_width.parse::<u32>().unwrap_or(32);
             let pointer_bits = target.pointer_width;
-
             let windows_llp64 = target.os == "windows" || target.env == "msvc";
-
-            let platform = Platform {
-                c_int_bits,
-                pointer_bits,
-                windows_llp64,
+            let c_long_bits = if windows_llp64
+            {
+                32
+            } else
+            {
+                pointer_bits
             };
-
-            replace_integers(&mut st.krate_mut(), platform);
+            let bit_widths = BitWidths {
+                c_int_bits,
+                c_long_bits,
+            };
+            replace_integers(&mut st.krate_mut(), bit_widths);
         }))
     });
 }
