@@ -91,10 +91,9 @@ fn is_removed_typedef_name(name: &str) -> bool {
 }
 
 fn set_path_to_single_ident(path: &mut rustc_ast::Path, name: &str) {
+    let span = path.span;
     path.segments.clear();
-    path.segments.push(PathSegment::from_ident(Ident::with_dummy_span(
-        Symbol::intern(name),
-    )));
+    path.segments.push(PathSegment::from_ident(Ident::new(Symbol::intern(name), span)));
 }
 
 struct ReplaceIntegers {
