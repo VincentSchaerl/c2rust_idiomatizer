@@ -13,8 +13,10 @@ use rustc_span::symbol::{Ident, Symbol};
 
 #[derive(Clone, Debug)]
 struct BitWidths {
+    c_short_bits: u32,
     c_int_bits: u32,
     c_long_bits: u32,
+    c_longlong_bits: u32,
 }
 
 fn rust_int(bits: u32, signed: bool) -> &'static str {
@@ -27,7 +29,9 @@ fn rust_int(bits: u32, signed: bool) -> &'static str {
         (32, false) => "u32",
         (64, true) => "i64",
         (64, false) => "u64",
-        _ => "i32",
+        (128, true) => "i128",
+        (128, false) => "u128",
+        _ => panic!("Unsupported integer width: {}", bits),
     }
 }
 
@@ -48,8 +52,8 @@ fn replacement_for_type_name(name: &str, bit_widths: &BitWidths) -> Option<&'sta
         "c_schar" => Some("i8"),
         "c_uchar" => Some("u8"),
 
-        "c_short" => Some("i16"),
-        "c_ushort" => Some("u16"),
+        "c_short" => Some(rust_int(bit_widths.c_short_bits, true)),
+        "c_ushort" => Some(rust_int(bit_widths.c_short_bits, false)),
 
         "c_int" => Some(rust_int(bit_widths.c_int_bits, true)),
         "c_uint" => Some(rust_int(bit_widths.c_int_bits, false)),
@@ -57,8 +61,8 @@ fn replacement_for_type_name(name: &str, bit_widths: &BitWidths) -> Option<&'sta
         "c_long" => Some(rust_int(bit_widths.c_long_bits, true)),
         "c_ulong" => Some(rust_int(bit_widths.c_long_bits, false)),
 
-        "c_longlong" => Some("i64"),
-        "c_ulonglong" => Some("u64"),
+        "c_longlong" => Some(rust_int(bit_widths.c_longlong_bits, true)),
+        "c_ulonglong" => Some(rust_int(bit_widths.c_longlong_bits, false)),
 
         _ => None,
     }
@@ -132,8 +136,9 @@ fn replace_integers(krate: &mut Crate, bit_widths: BitWidths) {
 
 #[no_mangle]
 pub fn register_commands(reg: &mut Registry) {
-    reg.register("replace_integers", |_args| {
-        Box::new(DriverCommand::new(Phase::Phase1, |st, cx| {
+    reg.register("replace_integers", |args| {
+        let args = args.to_vec();
+        Box::new(DriverCommand::new(Phase::Phase1, move |st, cx| {
             let target = &cx.session().target;
             let c_int_bits = target.c_int_width.parse::<u32>().unwrap_or(32);
             let pointer_bits = target.pointer_width;
@@ -145,10 +150,45 @@ pub fn register_commands(reg: &mut Registry) {
             {
                 pointer_bits
             };
-            let bit_widths = BitWidths {
+            let mut bit_widths = BitWidths
+            {
+                c_short_bits: 16,
                 c_int_bits,
                 c_long_bits,
+                c_longlong_bits: 64,
             };
+
+            for arg in &args
+            {
+                if let Some(value) = arg.strip_prefix("short-width=")
+                {
+                    bit_widths.c_short_bits = value.parse::<u32>().expect("Invalid value for short-width");
+                } else if let Some(value) = arg.strip_prefix("int-width=")
+                {
+                    bit_widths.c_int_bits = value
+                        .parse::<u32>().expect("Invalid value for int-width");
+                } else if let Some(value) = arg.strip_prefix("long-width=")
+                {
+                    bit_widths.c_long_bits = value.parse::<u32>().expect("Invalid value for long-width");
+                } else if let Some(value) = arg.strip_prefix("longlong-width=")
+                {
+                    bit_widths.c_longlong_bits = value.parse::<u32>().expect("Invalid value for longlong-width");
+                } else
+                {
+                    panic!("Unknown argument for replace_integers: {}", arg);
+                }
+            }
+            if !(bit_widths.c_short_bits<= bit_widths.c_int_bits && bit_widths.c_int_bits <= bit_widths.c_long_bits
+                && bit_widths.c_long_bits <= bit_widths.c_longlong_bits)
+            {
+                panic!(
+                    "Invalid C integer widths: expected short <= int <= long <= long long, got short={}, int={}, long={}, long long={}",
+                    bit_widths.c_short_bits,
+                    bit_widths.c_int_bits,
+                    bit_widths.c_long_bits,
+                    bit_widths.c_longlong_bits
+                );
+            }
             replace_integers(&mut st.krate_mut(), bit_widths);
         }))
     });
