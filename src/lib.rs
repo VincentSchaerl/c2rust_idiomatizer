@@ -10,6 +10,7 @@ use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
 use rustc_ast::{Crate, ItemKind, PathSegment, Ty, TyKind};
 use rustc_span::symbol::{Ident, Symbol};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 struct BitWidths {
@@ -17,6 +18,63 @@ struct BitWidths {
     c_int_bits: u32,
     c_long_bits: u32,
     c_longlong_bits: u32,
+}
+
+fn type_last_path_segment(ty: &Ty) -> Option<String> {
+    if let TyKind::Path(_, ref path) = ty.kind {
+        path.segments.last().map(|s| s.ident.name.to_string())
+    } else {
+        None
+    }
+}
+
+fn collect_type_aliases(krate: &Crate) -> HashMap<String, String> {
+    let mut aliases = HashMap::new();
+
+    for item in &krate.items {
+        if let ItemKind::TyAlias(ref ty_alias) = item.kind {
+            if let Some(ref ty) = ty_alias.ty {
+                if let Some(target) = type_last_path_segment(ty) {
+                    aliases.insert(item.ident.name.to_string(), target);
+                }
+            }
+        }
+    }
+
+    aliases
+}
+
+fn resolve_alias_chain(name: &str, aliases: &HashMap<String, String>) -> Option<String> {
+    let mut current = name.to_string();
+    let mut seen = HashSet::new();
+
+    loop {
+        if !seen.insert(current.clone()) {
+            return None;
+        }
+
+        match aliases.get(&current) {
+            Some(next) => current = next.clone(),
+            None => return Some(current),
+        }
+    }
+}
+
+fn validated_integer_aliases(krate: &Crate) -> HashMap<String, &'static str> {
+    let aliases = collect_type_aliases(krate);
+    let mut valid = HashMap::new();
+
+    for name in aliases.keys() {
+        if let Some(expected) = expected_alias_replacement(name) {
+            if let Some(actual) = resolve_alias_chain(name, &aliases) {
+                if actual == expected {
+                    valid.insert(name.clone(), expected);
+                }
+            }
+        }
+    }
+
+    valid
 }
 
 fn rust_int(bits: u32, signed: bool) -> &'static str {
@@ -35,20 +93,16 @@ fn rust_int(bits: u32, signed: bool) -> &'static str {
     }
 }
 
-fn replacement_for_type_name(name: &str, bit_widths: &BitWidths) -> Option<&'static str> {
+fn replacement_for_type_name(
+    name: &str,
+    bit_widths: &BitWidths,
+    valid_aliases: &HashMap<String, &'static str>,
+) -> Option<&'static str> {
+    if let Some(replacement) = valid_aliases.get(name) {
+        return Some(*replacement);
+    }
+
     match name {
-        "__int8_t" | "int8_t" => Some("i8"),
-        "__uint8_t" | "uint8_t" => Some("u8"),
-
-        "__int16_t" | "int16_t" => Some("i16"),
-        "__uint16_t" | "uint16_t" => Some("u16"),
-
-        "__int32_t" | "int32_t" => Some("i32"),
-        "__uint32_t" | "uint32_t" => Some("u32"),
-
-        "__int64_t" | "int64_t" => Some("i64"),
-        "__uint64_t" | "uint64_t" => Some("u64"),
-
         "c_schar" => Some("i8"),
         "c_uchar" => Some("u8"),
 
@@ -68,26 +122,22 @@ fn replacement_for_type_name(name: &str, bit_widths: &BitWidths) -> Option<&'sta
     }
 }
 
-fn is_removed_typedef_name(name: &str) -> bool {
-    matches!(
-        name,
-        "__int8_t"
-            | "int8_t"
-            | "__uint8_t"
-            | "uint8_t"
-            | "__int16_t"
-            | "int16_t"
-            | "__uint16_t"
-            | "uint16_t"
-            | "__int32_t"
-            | "int32_t"
-            | "__uint32_t"
-            | "uint32_t"
-            | "__int64_t"
-            | "int64_t"
-            | "__uint64_t"
-            | "uint64_t"
-    )
+fn expected_alias_replacement(name: &str) -> Option<&'static str> {
+    match name {
+        "__int8_t" | "int8_t" => Some("i8"),
+        "__uint8_t" | "uint8_t" => Some("u8"),
+
+        "__int16_t" | "int16_t" => Some("i16"),
+        "__uint16_t" | "uint16_t" => Some("u16"),
+
+        "__int32_t" | "int32_t" => Some("i32"),
+        "__uint32_t" | "uint32_t" => Some("u32"),
+
+        "__int64_t" | "int64_t" => Some("i64"),
+        "__uint64_t" | "uint64_t" => Some("u64"),
+
+        _ => None,
+    }
 }
 
 fn set_path_to_single_ident(path: &mut rustc_ast::Path, name: &str) {
@@ -98,14 +148,16 @@ fn set_path_to_single_ident(path: &mut rustc_ast::Path, name: &str) {
 
 struct ReplaceIntegers {
     bit_widths: BitWidths,
+    valid_aliases: HashMap<String, &'static str>,
 }
 
 impl MutVisitor for ReplaceIntegers {
+
     fn visit_crate(&mut self, krate: &mut Crate) {
         krate.items.retain(|item| {
             let name = item.ident.name.to_string();
 
-            !(matches!(item.kind, ItemKind::TyAlias(..)) && is_removed_typedef_name(&name))
+            !(matches!(item.kind, ItemKind::TyAlias(..)) && self.valid_aliases.contains_key(&name))
         });
 
         mut_visit::noop_visit_crate(krate, self);
@@ -116,7 +168,8 @@ impl MutVisitor for ReplaceIntegers {
             let last = path.segments.last().map(|s| s.ident.name.to_string());
 
             if let Some(last) = last {
-                if let Some(replacement) = replacement_for_type_name(&last, &self.bit_widths) {
+                if let Some(replacement) = replacement_for_type_name(&last, &self.bit_widths, &self.valid_aliases)
+                {
                     *qself = None;
                     set_path_to_single_ident(path, replacement);
                     return;
@@ -129,7 +182,13 @@ impl MutVisitor for ReplaceIntegers {
 }
 
 fn replace_integers(krate: &mut Crate, bit_widths: BitWidths) {
-    let mut visitor = ReplaceIntegers { bit_widths };
+    let valid_aliases = validated_integer_aliases(krate);
+
+    let mut visitor = ReplaceIntegers {
+        bit_widths,
+        valid_aliases,
+    };
+
     visitor.visit_crate(krate);
 }
 
