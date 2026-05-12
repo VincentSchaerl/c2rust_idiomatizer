@@ -8,7 +8,7 @@ name = "c2rust_idiomatizer"
 crate-type = ["dylib"]
 
 [dependencies]
-c2rust-refactor = { path = "../c2rust/c2rust-refactor" }
+c2rust-refactor = { path = "lib/c2rust/c2rust-refactor" }
 
 [package.metadata.rust-analyzer]
 rustc_private = true
