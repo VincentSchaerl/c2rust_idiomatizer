@@ -1,0 +1,28 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Iinc",
+      "-o",
+      "out/obj/fill_array.o",
+      "src/fill_array.c"
+    ],
+    "directory": "/home/vincent/projects/c2rust_idiomatizer_test/in",
+    "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/fill_array.c",
+    "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/fill_array.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Iinc",
+      "-o",
+      "out/obj/main.o",
+      "src/main.c"
+    ],
+    "directory": "/home/vincent/projects/c2rust_idiomatizer_test/in",
+    "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/main.c",
+    "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/main.o"
+  }
+]

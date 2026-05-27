@@ -1,18 +1,34 @@
 #!/usr/bin/env bash
 set -e
+set -x
 cd "$(dirname "$0")"
 
-rm -rf .out/*
 rm -rf out/*
+mkdir -p out/transpile
+mkdir -p out/refactor
 
-mkdir -p .out/gcc
-gcc src/main.c -o .out/gcc/main
+cd in
+make clean
+make
+make clean
+bear -- make
+cd ..
+~/projects/c2rust_idiomatizer/lib/c2rust/target/debug/c2rust-transpile \
+  --emit-build-files \
+  --output-dir out/transpile \
+  in/compile_commands.json
 
-mkdir -p .out/c2rust
-c2rust-transpile -b main -o .out/c2rust src/main.c
-mkdir -p out
-cp .out/c2rust/src/main.rs out/main_transpile.rs
-
-cd .out/c2rust
-c2rust-refactor --cargo --bin main -P ~/projects/c2rust_idiomatizer/target/debug -p c2rust_idiomatizer -r alongside replace_integers \; remove_redundant_integer_casts
-cp src/main.new ../../out/main_refactor.rs
+cp -r out/transpile/* out/refactor
+cd out/refactor
+~/projects/c2rust_idiomatizer/lib/c2rust/target/debug/c2rust-refactor \
+  --cargo \
+  --plugin-dir ~/projects/c2rust_idiomatizer/target/debug \
+  --plugin-name c2rust_idiomatizer \
+  --rewrite-mode inplace \
+  replace_integers
+~/projects/c2rust_idiomatizer/lib/c2rust/target/debug/c2rust-refactor \
+  --cargo \
+  --plugin-dir ~/projects/c2rust_idiomatizer/target/debug \
+  --plugin-name c2rust_idiomatizer \
+  --rewrite-mode inplace \
+  remove_redundant_integer_casts
