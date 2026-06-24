@@ -5,38 +5,61 @@ use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
 use rustc_ast::{Crate, Expr, ExprKind, LitKind, Local, LocalKind, Ty, TyKind};
 
-struct RemoveRedundantIntegerCasts {
+#[derive(Clone, Debug)]
+struct BitWidths {
+    c_short_bits: u32,
+    c_int_bits: u32,
+    c_long_bits: u32,
+    c_longlong_bits: u32,
     pointer_bits: u32,
+}
+
+struct RemoveRedundantIntegerCasts {
+    bit_widths: BitWidths,
 }
 
 pub fn register_remove_redundant_integer_casts(reg: &mut Registry) {
     reg.register("remove_redundant_integer_casts", |_args| {
         Box::new(DriverCommand::new(Phase::Phase1, |st, cx| {
-            let pointer_bits = cx.session().target.pointer_width;
-
-            remove_redundant_integer_casts(&mut st.krate_mut(), pointer_bits);
+            let target = &cx.session().target;
+            let c_int_bits = target.c_int_width.parse::<u32>().unwrap_or(32);
+            let pointer_bits = target.pointer_width;
+            let windows_llp64 = target.os == "windows" || target.env == "msvc";
+            let c_long_bits = if windows_llp64 {
+                32
+            } else {
+                pointer_bits
+            };
+            let bit_widths = BitWidths {
+                c_short_bits: 16,
+                c_int_bits,
+                c_long_bits,
+                c_longlong_bits: 64,
+                pointer_bits,
+            };
+            remove_redundant_integer_casts(&mut st.krate_mut(), bit_widths);
         }))
     });
 }
 
-fn remove_redundant_integer_casts(krate: &mut Crate, pointer_bits: u32) {
-    let mut visitor = RemoveRedundantIntegerCasts { pointer_bits };
+fn remove_redundant_integer_casts(krate: &mut Crate, bit_widths: BitWidths) {
+    let mut visitor = RemoveRedundantIntegerCasts { bit_widths };
     visitor.visit_crate(krate);
 }
 
 impl MutVisitor for RemoveRedundantIntegerCasts {
     fn visit_local(&mut self, local: &mut P<Local>) {
         let expected_type_name = match local.ty {
-            Some(ref expected_ty) => primitive_integer_type_name(expected_ty),
+            Some(ref expected_ty) => integer_type_name(expected_ty, &self.bit_widths),
             None => None,
         };
         if let Some(expected_type_name) = expected_type_name {
             match local.kind {
                 LocalKind::Init(ref mut init) => {
-                    remove_cast_if_redundant(init, expected_type_name, self.pointer_bits);
+                    remove_cast_if_redundant(init, expected_type_name, &self.bit_widths);
                 }
                 LocalKind::InitElse(ref mut init, _) => {
-                    remove_cast_if_redundant(init, expected_type_name, self.pointer_bits);
+                    remove_cast_if_redundant(init, expected_type_name, &self.bit_widths);
                 }
                 LocalKind::Decl => {}
             }
@@ -48,13 +71,13 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
 fn remove_cast_if_redundant(
     expr: &mut P<Expr>,
     expected_type_name: &'static str,
-    pointer_bits: u32,
+    bit_widths: &BitWidths,
 ) {
     let (inner_expr, cast_ty) = match expr.kind {
         ExprKind::Cast(ref inner_expr, ref cast_ty) => (inner_expr, cast_ty),
         _ => return,
     };
-    let cast_type_name = match primitive_integer_type_name(cast_ty) {
+    let cast_type_name = match integer_type_name(cast_ty, bit_widths) {
         Some(name) => name,
         None => return,
     };
@@ -65,37 +88,48 @@ fn remove_cast_if_redundant(
         Some(value) => value,
         None => return,
     };
-    if !integer_value_fits_type(value, cast_type_name, pointer_bits) {
+    if !integer_value_fits_type(value, cast_type_name, bit_widths.pointer_bits) {
         return;
     }
     *expr = inner_expr.clone();
 }
 
-fn primitive_integer_type_name(ty: &Ty) -> Option<&'static str> {
-    if let TyKind::Path(None, ref path) = ty.kind {
-        if path.segments.len() != 1 {
-            return None;
-        }
-        let name = path.segments[0].ident.name.as_str();
-        match &*name {
-            "i8" => Some("i8"),
-            "i16" => Some("i16"),
-            "i32" => Some("i32"),
-            "i64" => Some("i64"),
-            "i128" => Some("i128"),
-            "isize" => Some("isize"),
+fn integer_type_name(ty: &Ty, bit_widths: &BitWidths) -> Option<&'static str> {
+    let last = match ty.kind {
+        TyKind::Path(None, ref path) => path.segments.last().map(|s| s.ident.name.to_string())?,
+        _ => return None,
+    };
+    match &*last {
+        "i8" => Some("i8"),
+        "i16" => Some("i16"),
+        "i32" => Some("i32"),
+        "i64" => Some("i64"),
+        "i128" => Some("i128"),
+        "isize" => Some("isize"),
 
-            "u8" => Some("u8"),
-            "u16" => Some("u16"),
-            "u32" => Some("u32"),
-            "u64" => Some("u64"),
-            "u128" => Some("u128"),
-            "usize" => Some("usize"),
+        "u8" => Some("u8"),
+        "u16" => Some("u16"),
+        "u32" => Some("u32"),
+        "u64" => Some("u64"),
+        "u128" => Some("u128"),
+        "usize" => Some("usize"),
 
-            _ => None,
-        }
-    } else {
-        None
+        "c_schar" => Some("i8"),
+        "c_uchar" => Some("u8"),
+
+        "c_short" => Some(rust_int(bit_widths.c_short_bits, true)),
+        "c_ushort" => Some(rust_int(bit_widths.c_short_bits, false)),
+
+        "c_int" => Some(rust_int(bit_widths.c_int_bits, true)),
+        "c_uint" => Some(rust_int(bit_widths.c_int_bits, false)),
+
+        "c_long" => Some(rust_int(bit_widths.c_long_bits, true)),
+        "c_ulong" => Some(rust_int(bit_widths.c_long_bits, false)),
+
+        "c_longlong" => Some(rust_int(bit_widths.c_longlong_bits, true)),
+        "c_ulonglong" => Some(rust_int(bit_widths.c_longlong_bits, false)),
+
+        _ => None,
     }
 }
 
@@ -166,5 +200,21 @@ fn unsigned_max_for_bits(bits: u32) -> u128 {
         64 => u64::MAX as u128,
         128 => u128::MAX,
         _ => 0,
+    }
+}
+
+fn rust_int(bits: u32, signed: bool) -> &'static str {
+    match (bits, signed) {
+        (8, true) => "i8",
+        (8, false) => "u8",
+        (16, true) => "i16",
+        (16, false) => "u16",
+        (32, true) => "i32",
+        (32, false) => "u32",
+        (64, true) => "i64",
+        (64, false) => "u64",
+        (128, true) => "i128",
+        (128, false) => "u128",
+        _ => panic!("Unsupported integer width: {}", bits),
     }
 }
