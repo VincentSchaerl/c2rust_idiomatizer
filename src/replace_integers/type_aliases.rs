@@ -1,4 +1,5 @@
-use rustc_ast::{Crate, ItemKind, Ty, TyKind};
+use rustc_ast::ptr::P;
+use rustc_ast::{Crate, Item, ItemKind, ModKind, Ty, TyKind};
 use std::collections::{HashMap, HashSet};
 
 pub fn validated_integer_aliases(krate: &Crate) -> HashMap<String, &'static str> {
@@ -18,16 +19,29 @@ pub fn validated_integer_aliases(krate: &Crate) -> HashMap<String, &'static str>
 
 fn collect_type_aliases(krate: &Crate) -> HashMap<String, String> {
     let mut aliases = HashMap::new();
-    for item in &krate.items {
-        if let ItemKind::TyAlias(ref ty_alias) = item.kind {
-            if let Some(ref ty) = ty_alias.ty {
-                if let Some(target) = type_last_path_segment(ty) {
-                    aliases.insert(item.ident.name.to_string(), target);
+    collect_type_aliases_from_items(&krate.items, &mut aliases);
+    aliases
+}
+
+fn collect_type_aliases_from_items(
+    items: &[P<Item>],
+    aliases: &mut HashMap<String, String>,
+) {
+    for item in items {
+        match item.kind {
+            ItemKind::TyAlias(ref ty_alias) => {
+                if let Some(ref ty) = ty_alias.ty {
+                    if let Some(target) = type_last_path_segment(ty) {
+                        aliases.insert(item.ident.name.to_string(), target);
+                    }
                 }
             }
+            ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
+                collect_type_aliases_from_items(module_items, aliases);
+            }
+            _ => {}
         }
     }
-    aliases
 }
 
 fn type_last_path_segment(ty: &Ty) -> Option<String> {

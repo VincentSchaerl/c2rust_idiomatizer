@@ -5,7 +5,7 @@ use c2rust_refactor::driver::Phase;
 
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
-use rustc_ast::{Crate, ItemKind, PathSegment, Ty, TyKind};
+use rustc_ast::{Crate, Item, ItemKind, ModKind, PathSegment, Ty, TyKind};
 use rustc_span::symbol::{Ident, Symbol};
 
 use std::collections::HashMap;
@@ -96,12 +96,10 @@ fn replace_integers(krate: &mut Crate, bit_widths: BitWidths) {
 
 impl MutVisitor for ReplaceIntegers {
     fn visit_crate(&mut self, krate: &mut Crate) {
-        krate.items.retain(|item| {
-            let name = item.ident.name.to_string();
-            !(matches!(item.kind, ItemKind::TyAlias(..)) && self.valid_aliases.contains_key(&name))
-        });
+        remove_valid_integer_aliases_from_items(&mut krate.items, &self.valid_aliases);
         mut_visit::noop_visit_crate(krate, self);
     }
+
 
     fn visit_ty(&mut self, ty: &mut P<Ty>) {
         if let TyKind::Path(ref mut qself, ref mut path) = ty.kind {
@@ -117,6 +115,21 @@ impl MutVisitor for ReplaceIntegers {
             }
         }
         mut_visit::noop_visit_ty(ty, self);
+    }
+}
+
+fn remove_valid_integer_aliases_from_items(
+    items: &mut Vec<P<Item>>,
+    valid_aliases: &HashMap<String, &'static str>,
+) {
+    items.retain(|item| {
+        let name = item.ident.name.to_string();
+        !(matches!(item.kind, ItemKind::TyAlias(..)) && valid_aliases.contains_key(&name))
+    });
+    for item in items.iter_mut() {
+        if let ItemKind::Mod(_, ModKind::Loaded(ref mut module_items, ..)) = item.kind {
+            remove_valid_integer_aliases_from_items(module_items, valid_aliases);
+        }
     }
 }
 
