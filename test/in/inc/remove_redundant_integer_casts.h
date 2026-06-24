@@ -1,3 +1,3 @@
 #pragma once
 
-void remove_redundant_integer_casts();
+int remove_redundant_integer_casts();
