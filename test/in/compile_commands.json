@@ -5,12 +5,25 @@
       "-c",
       "-Iinc",
       "-o",
-      "out/obj/fill_array.o",
-      "src/fill_array.c"
+      "out/obj/idiomatize_array_passing.o",
+      "src/idiomatize_array_passing.c"
     ],
     "directory": "/home/vincent/projects/c2rust_idiomatizer_test/in",
-    "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/fill_array.c",
-    "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/fill_array.o"
+    "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/idiomatize_array_passing.c",
+    "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/idiomatize_array_passing.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Iinc",
+      "-o",
+      "out/obj/idiomatize_loops.o",
+      "src/idiomatize_loops.c"
+    ],
+    "directory": "/home/vincent/projects/c2rust_idiomatizer_test/in",
+    "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/idiomatize_loops.c",
+    "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/idiomatize_loops.o"
   },
   {
     "arguments": [
@@ -24,5 +37,31 @@
     "directory": "/home/vincent/projects/c2rust_idiomatizer_test/in",
     "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/main.c",
     "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/main.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Iinc",
+      "-o",
+      "out/obj/remove_redundant_integer_casts.o",
+      "src/remove_redundant_integer_casts.c"
+    ],
+    "directory": "/home/vincent/projects/c2rust_idiomatizer_test/in",
+    "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/remove_redundant_integer_casts.c",
+    "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/remove_redundant_integer_casts.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Iinc",
+      "-o",
+      "out/obj/replace_integers.o",
+      "src/replace_integers.c"
+    ],
+    "directory": "/home/vincent/projects/c2rust_idiomatizer_test/in",
+    "file": "/home/vincent/projects/c2rust_idiomatizer_test/in/src/replace_integers.c",
+    "output": "/home/vincent/projects/c2rust_idiomatizer_test/in/out/obj/replace_integers.o"
   }
 ]
