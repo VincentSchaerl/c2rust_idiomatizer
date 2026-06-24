@@ -23,10 +23,7 @@ fn collect_type_aliases(krate: &Crate) -> HashMap<String, String> {
     aliases
 }
 
-fn collect_type_aliases_from_items(
-    items: &[P<Item>],
-    aliases: &mut HashMap<String, String>,
-) {
+fn collect_type_aliases_from_items(items: &[P<Item>], aliases: &mut HashMap<String, String>) {
     for item in items {
         match item.kind {
             ItemKind::TyAlias(ref ty_alias) => {

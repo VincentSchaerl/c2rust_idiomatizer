@@ -100,7 +100,6 @@ impl MutVisitor for ReplaceIntegers {
         mut_visit::noop_visit_crate(krate, self);
     }
 
-
     fn visit_ty(&mut self, ty: &mut P<Ty>) {
         if let TyKind::Path(ref mut qself, ref mut path) = ty.kind {
             let last = path.segments.last().map(|s| s.ident.name.to_string());
