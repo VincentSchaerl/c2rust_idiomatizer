@@ -17,6 +17,9 @@ cd ..
   --emit-build-files \
   --output-dir out/transpile \
   in/compile_commands.json
+cd out/transpile
+cargo build
+cd ../..
 
 cp -r out/transpile/* out/refactor
 cd out/refactor
@@ -32,3 +35,4 @@ cd out/refactor
   --plugin-name c2rust_idiomatizer \
   --rewrite-mode inplace \
   remove_redundant_integer_casts
+cargo build
