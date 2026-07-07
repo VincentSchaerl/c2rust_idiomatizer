@@ -3,7 +3,13 @@ use c2rust_refactor::driver::Phase;
 
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
-use rustc_ast::{Crate, Expr, ExprKind, LitKind, Local, LocalKind, Ty, TyKind};
+use rustc_ast::{
+    Block, Crate, Expr, ExprKind, FnRetTy, Item, ItemKind, LitKind, Local, LocalKind, ModKind, Pat,
+    PatKind, Ty, TyKind,
+};
+use rustc_span::Span;
+
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 struct BitWidths {
@@ -14,8 +20,19 @@ struct BitWidths {
     pointer_bits: u32,
 }
 
+#[derive(Clone, Debug)]
+struct FunctionContext {
+    params: HashMap<String, &'static str>,
+    return_type: Option<&'static str>,
+}
+
 struct RemoveRedundantIntegerCasts {
     bit_widths: BitWidths,
+    global_vars: HashMap<String, &'static str>,
+    function_param_types: HashMap<String, Vec<Option<&'static str>>>,
+    function_contexts: Vec<(Span, FunctionContext)>,
+    local_scopes: Vec<HashMap<String, &'static str>>,
+    current_return_types: Vec<Option<&'static str>>,
 }
 
 pub fn register_remove_redundant_integer_casts(reg: &mut Registry) {
@@ -39,17 +56,45 @@ pub fn register_remove_redundant_integer_casts(reg: &mut Registry) {
 }
 
 fn remove_redundant_integer_casts(krate: &mut Crate, bit_widths: BitWidths) {
-    let mut visitor = RemoveRedundantIntegerCasts { bit_widths };
+    let global_vars = collect_global_vars(krate, &bit_widths);
+    let function_param_types = collect_function_param_types(krate, &bit_widths);
+    let function_contexts = collect_function_contexts(krate, &bit_widths);
+    let mut visitor = RemoveRedundantIntegerCasts {
+        bit_widths,
+        global_vars,
+        function_param_types,
+        function_contexts,
+        local_scopes: Vec::new(),
+        current_return_types: Vec::new(),
+    };
     visitor.visit_crate(krate);
 }
 
 impl MutVisitor for RemoveRedundantIntegerCasts {
+    fn visit_block(&mut self, block: &mut P<Block>) {
+        let function_context = self.function_context_for_block(block.span).cloned();
+        if let Some(context) = function_context {
+            self.local_scopes.push(context.params);
+            self.current_return_types.push(context.return_type);
+            mut_visit::noop_visit_block(block, self);
+            self.current_return_types.pop();
+            self.local_scopes.pop();
+        } else {
+            self.local_scopes.push(HashMap::new());
+            mut_visit::noop_visit_block(block, self);
+            self.local_scopes.pop();
+        }
+    }
+
     fn visit_local(&mut self, local: &mut P<Local>) {
         let expected_type_name = match local.ty {
             Some(ref expected_ty) => integer_type_name(expected_ty, &self.bit_widths),
             None => None,
         };
         if let Some(expected_type_name) = expected_type_name {
+            if let Some(name) = local_name(local) {
+                self.insert_local_var(name, expected_type_name);
+            }
             match local.kind {
                 LocalKind::Init(ref mut init) => {
                     remove_cast_if_redundant(init, expected_type_name, &self.bit_widths);
@@ -61,6 +106,187 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
             }
         }
         mut_visit::noop_visit_local(local, self);
+    }
+
+    fn visit_expr(&mut self, expr: &mut P<Expr>) {
+        match expr.kind {
+            ExprKind::Assign(ref lhs, ref mut rhs, _) => {
+                if let Some(var_name) = expr_path_last_segment(lhs) {
+                    if let Some(expected_type_name) = self.lookup_var_type(&var_name) {
+                        remove_cast_if_redundant(rhs, expected_type_name, &self.bit_widths);
+                    }
+                }
+            }
+            ExprKind::Ret(Some(ref mut ret_expr)) => {
+                if let Some(Some(expected_type_name)) = self.current_return_types.last() {
+                    remove_cast_if_redundant(ret_expr, *expected_type_name, &self.bit_widths);
+                }
+            }
+            ExprKind::Call(ref callee, ref mut args) => {
+                if let Some(function_name) = expr_path_last_segment(callee) {
+                    if let Some(param_types) =
+                        self.function_param_types.get(&function_name).cloned()
+                    {
+                        for (arg, expected_type_name) in
+                            args.iter_mut().zip(param_types.into_iter())
+                        {
+                            if let Some(expected_type_name) = expected_type_name {
+                                remove_cast_if_redundant(arg, expected_type_name, &self.bit_widths);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        mut_visit::noop_visit_expr(expr, self);
+    }
+}
+
+impl RemoveRedundantIntegerCasts {
+    fn insert_local_var(&mut self, name: String, type_name: &'static str) {
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.insert(name, type_name);
+        }
+    }
+
+    fn lookup_var_type(&self, name: &str) -> Option<&'static str> {
+        for scope in self.local_scopes.iter().rev() {
+            if let Some(type_name) = scope.get(name) {
+                return Some(*type_name);
+            }
+        }
+
+        self.global_vars.get(name).copied()
+    }
+
+    fn function_context_for_block(&self, span: Span) -> Option<&FunctionContext> {
+        self.function_contexts
+            .iter()
+            .find(|(body_span, _)| *body_span == span)
+            .map(|(_, context)| context)
+    }
+}
+
+fn collect_global_vars(krate: &Crate, bit_widths: &BitWidths) -> HashMap<String, &'static str> {
+    let mut vars = HashMap::new();
+    collect_global_vars_from_items(&krate.items, bit_widths, &mut vars);
+    vars
+}
+
+fn collect_global_vars_from_items(
+    items: &[P<Item>],
+    bit_widths: &BitWidths,
+    vars: &mut HashMap<String, &'static str>,
+) {
+    for item in items {
+        match item.kind {
+            ItemKind::Static(ref ty, ..) => {
+                if let Some(type_name) = integer_type_name(ty, bit_widths) {
+                    vars.insert(item.ident.name.to_string(), type_name);
+                }
+            }
+            ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
+                collect_global_vars_from_items(module_items, bit_widths, vars);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_function_param_types(
+    krate: &Crate,
+    bit_widths: &BitWidths,
+) -> HashMap<String, Vec<Option<&'static str>>> {
+    let mut functions = HashMap::new();
+    collect_function_param_types_from_items(&krate.items, bit_widths, &mut functions);
+    functions
+}
+
+fn collect_function_param_types_from_items(
+    items: &[P<Item>],
+    bit_widths: &BitWidths,
+    functions: &mut HashMap<String, Vec<Option<&'static str>>>,
+) {
+    for item in items {
+        match item.kind {
+            ItemKind::Fn(ref func) => {
+                let mut params = Vec::new();
+                for param in &func.sig.decl.inputs {
+                    params.push(integer_type_name(&param.ty, bit_widths));
+                }
+                functions.insert(item.ident.name.to_string(), params);
+            }
+            ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
+                collect_function_param_types_from_items(module_items, bit_widths, functions);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_function_contexts(
+    krate: &Crate,
+    bit_widths: &BitWidths,
+) -> Vec<(Span, FunctionContext)> {
+    let mut contexts = Vec::new();
+    collect_function_contexts_from_items(&krate.items, bit_widths, &mut contexts);
+    contexts
+}
+
+fn collect_function_contexts_from_items(
+    items: &[P<Item>],
+    bit_widths: &BitWidths,
+    contexts: &mut Vec<(Span, FunctionContext)>,
+) {
+    for item in items {
+        match item.kind {
+            ItemKind::Fn(ref func) => {
+                if let Some(ref body) = func.body {
+                    let mut params = HashMap::new();
+                    for param in &func.sig.decl.inputs {
+                        if let Some(type_name) = integer_type_name(&param.ty, bit_widths) {
+                            if let Some(name) = pat_name(&param.pat) {
+                                params.insert(name, type_name);
+                            }
+                        }
+                    }
+                    let return_type = match func.sig.decl.output {
+                        FnRetTy::Ty(ref ty) => integer_type_name(ty, bit_widths),
+                        FnRetTy::Default(_) => None,
+                    };
+                    contexts.push((
+                        body.span,
+                        FunctionContext {
+                            params,
+                            return_type,
+                        },
+                    ));
+                }
+            }
+            ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
+                collect_function_contexts_from_items(module_items, bit_widths, contexts);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn local_name(local: &Local) -> Option<String> {
+    pat_name(&local.pat)
+}
+
+fn pat_name(pat: &Pat) -> Option<String> {
+    match pat.kind {
+        PatKind::Ident(_, ident, _) => Some(ident.name.to_string()),
+        _ => None,
+    }
+}
+
+fn expr_path_last_segment(expr: &Expr) -> Option<String> {
+    match expr.kind {
+        ExprKind::Path(_, ref path) => path.segments.last().map(|s| s.ident.name.to_string()),
+        _ => None,
     }
 }
 
