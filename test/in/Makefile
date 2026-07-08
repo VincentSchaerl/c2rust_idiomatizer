@@ -8,7 +8,7 @@ SRC = $(wildcard src/*.c)
 OBJ = $(patsubst src/%.c, $(OBJ_DIR)/%.o, $(SRC))
 DEPS = $(OBJ:.o=.d)
 
-TARGET = out/c_test
+TARGET = out/c2rust_idiomatizer_test
 
 .PHONY: run clean
 

@@ -1,14 +1,14 @@
 #include <stdint.h>
 
-#include "replace_integers.h"
-#include "remove_redundant_integer_casts.h"
-#include "idiomatize_loops.h"
-#include "idiomatize_array_passing.h"
+#include "test_idiomatize_array_passing.h"
+#include "test_idiomatize_loops.h"
+#include "test_remove_redundant_integer_casts.h"
+#include "test_replace_integers.h"
 
 int main()
 {
-    replace_integers();
-    remove_redundant_integer_casts();
-    idiomatize_loops();
-    idiomatize_array_passing();
+    test_replace_integers();
+    test_remove_redundant_integer_casts();
+    test_idiomatize_loops();
+    test_idiomatize_array_passing();
 }

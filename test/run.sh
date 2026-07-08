@@ -3,22 +3,25 @@ set -e
 set -x
 cd "$(dirname "$0")"
 
+rm -f in/compile_commands.json
 rm -rf out/*
 mkdir -p out/transpile
 mkdir -p out/refactor
 
 cd in
 make clean
-make
+make run
 make clean
 bear -- make
 cd ..
 ~/projects/c2rust_idiomatizer/lib/c2rust/target/debug/c2rust-transpile \
-  --emit-build-files \
+  --binary main \
+  --thin-binaries \
   --output-dir out/transpile \
   in/compile_commands.json
 cd out/transpile
 cargo build
+cargo run
 cd ../..
 
 cp -r out/transpile/* out/refactor
@@ -36,3 +39,4 @@ cd out/refactor
   --rewrite-mode inplace \
   remove_redundant_integer_casts
 cargo build
+cargo run

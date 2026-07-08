@@ -1,9 +1,12 @@
-#include "idiomatize_array_passing.h"
+#include <stdio.h>
 
-void idiomatize_array_passing()
+#include "test_idiomatize_array_passing.h"
+
+void test_idiomatize_array_passing()
 {
     int array0[10];
     fill_array(array0, 10);
+    printf("End of test_idiomatize_array_passing().\n");
 }
 
 void fill_array(int* array, int size)

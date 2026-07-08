@@ -1,8 +1,9 @@
 #include <stdint.h>
+#include <stdio.h>
 
-#include "replace_integers.h"
+#include "test_replace_integers.h"
 
-void replace_integers()
+void test_replace_integers()
 {
     signed char signed_char = 2;
     unsigned char unsigned_char = 3;
@@ -34,4 +35,6 @@ void replace_integers()
     
     int64_t _int64_t = 22;
     uint64_t _uint64_t = 23;
+
+    printf("End of test_replace_integers().\n");
 }
