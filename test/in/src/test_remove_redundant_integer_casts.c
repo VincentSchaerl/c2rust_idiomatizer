@@ -18,26 +18,26 @@ void test_remove_redundant_integer_casts()
 
     c = 3;
 
-    outerStruct0.i = 4;
-    outerStruct0.innerStruct.i = 5;
+    outerStruct0.x = 4;
+    outerStruct0.innerStruct.x = 5;
 
     struct OuterStruct outerStruct1 = { 6, { 7 } };
 
-    struct OuterStruct outerStruct2 = { .i = 8, .innerStruct = { .i = 9 } };
+    struct OuterStruct outerStruct2 = { .x = 8, .innerStruct = { .x = 9 } };
 
-    outerStructTypedef0.i = 10;
-    outerStructTypedef0.innerStructTypedef.i = 11;
+    outerStructTypedef0.x = 10;
+    outerStructTypedef0.innerStructTypedef.x = 11;
 
     OuterStructTypedef outerStructTypedef1 = { 12, { 13 } };
 
-    OuterStructTypedef outerStructTypedef2 = { .i = 14, .innerStructTypedef = { .i = 15 } };
+    OuterStructTypedef outerStructTypedef2 = { .x = 14, .innerStructTypedef = { .x = 15 } };
 
     receive_and_return_integers(16, (struct OuterStruct){ 17, { 18 } }, (OuterStructTypedef){ 19, { 20 } });
 
     receive_and_return_integers(
         21,
-        (struct OuterStruct){ .i = 22, .innerStruct = { .i = 23 } },
-        (OuterStructTypedef){ .i = 24, .innerStructTypedef = { .i = 25 } }
+        (struct OuterStruct){ .x = 22, .innerStruct = { .x = 23 } },
+        (OuterStructTypedef){ .x = 24, .innerStructTypedef = { .x = 25 } }
     );
 
     printf("End of test_remove_redundant_integer_casts().\n");
@@ -47,11 +47,11 @@ static int receive_and_return_integers(int d, struct OuterStruct outerStruct, Ou
 {
     d = 26;
 
-    outerStruct.i = 27;
-    outerStruct.innerStruct.i = 28;
+    outerStruct.x = 27;
+    outerStruct.innerStruct.x = 28;
 
-    outerStructTypedef.i = 29;
-    outerStructTypedef.innerStructTypedef.i = 30;
+    outerStructTypedef.x = 29;
+    outerStructTypedef.innerStructTypedef.x = 30;
 
     return 31;
 }

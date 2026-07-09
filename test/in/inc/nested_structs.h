@@ -2,22 +2,22 @@
 
 struct InnerStruct
 {
-    int i;
+    int x;
 };
 
 struct OuterStruct
 {
-    int i;
+    int x;
     struct InnerStruct innerStruct;
 };
 
 typedef struct
 {
-    int i;
+    int x;
 } InnerStructTypedef;
 
 typedef struct
 {
-    int i;
+    int x;
     InnerStructTypedef innerStructTypedef;
 } OuterStructTypedef;

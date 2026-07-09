@@ -42,22 +42,22 @@ void test_idiomatize_loops()
     for (int i = array1[0]; i < 10; i++) {}
     for (int i = array1[a]; i < 10; i++) {}
 
-    outerStruct0.i = 0;
-    outerStruct0.innerStruct.i = 0;
-    outerStructTypedef0.i = 0;
-    outerStructTypedef0.innerStructTypedef.i = 0;
-    outerStruct1.i = 0;
-    outerStruct1.innerStruct.i = 0;
-    outerStructTypedef1.i = 0;
-    outerStructTypedef1.innerStructTypedef.i = 0;
-    for (int i = outerStruct0.i; i < 10; i++) {}
-    for (int i = outerStruct0.innerStruct.i; i < 10; i++) {}
-    for (int i = outerStructTypedef0.i; i < 10; i++) {}
-    for (int i = outerStructTypedef0.innerStructTypedef.i; i < 10; i++) {}
-    for (int i = outerStruct1.i; i < 10; i++) {}
-    for (int i = outerStruct1.innerStruct.i; i < 10; i++) {}
-    for (int i = outerStructTypedef1.i; i < 10; i++) {}
-    for (int i = outerStructTypedef1.innerStructTypedef.i; i < 10; i++) {}
+    outerStruct0.x = 0;
+    outerStruct0.innerStruct.x = 0;
+    outerStructTypedef0.x = 0;
+    outerStructTypedef0.innerStructTypedef.x = 0;
+    outerStruct1.x = 0;
+    outerStruct1.innerStruct.x = 0;
+    outerStructTypedef1.x = 0;
+    outerStructTypedef1.innerStructTypedef.x = 0;
+    for (int i = outerStruct0.x; i < 10; i++) {}
+    for (int i = outerStruct0.innerStruct.x; i < 10; i++) {}
+    for (int i = outerStructTypedef0.x; i < 10; i++) {}
+    for (int i = outerStructTypedef0.innerStructTypedef.x; i < 10; i++) {}
+    for (int i = outerStruct1.x; i < 10; i++) {}
+    for (int i = outerStruct1.innerStruct.x; i < 10; i++) {}
+    for (int i = outerStructTypedef1.x; i < 10; i++) {}
+    for (int i = outerStructTypedef1.innerStructTypedef.x; i < 10; i++) {}
 
     receive_integers_for_l(a, &a, array0, outerStruct0, &outerStruct0, outerStructTypedef0, &outerStructTypedef0);
 
@@ -87,22 +87,22 @@ void test_idiomatize_loops()
     for (int i = 0; i < array1[0]; i++) {}
     for (int i = 0; i < array1[a]; i++) {}
 
-    outerStruct0.i = 10;
-    outerStruct0.innerStruct.i = 10;
-    outerStructTypedef0.i = 10;
-    outerStructTypedef0.innerStructTypedef.i = 10;
-    outerStruct1.i = 10;
-    outerStruct1.innerStruct.i = 10;
-    outerStructTypedef1.i = 10;
-    outerStructTypedef1.innerStructTypedef.i = 10;
-    for (int i = 0; i < outerStruct0.i; i++) {}
-    for (int i = 0; i < outerStruct0.innerStruct.i; i++) {}
-    for (int i = 0; i < outerStructTypedef0.i; i++) {}
-    for (int i = 0; i < outerStructTypedef0.innerStructTypedef.i; i++) {}
-    for (int i = 0; i < outerStruct1.i; i++) {}
-    for (int i = 0; i < outerStruct1.innerStruct.i; i++) {}
-    for (int i = 0; i < outerStructTypedef1.i; i++) {}
-    for (int i = 0; i < outerStructTypedef1.innerStructTypedef.i; i++) {}
+    outerStruct0.x = 10;
+    outerStruct0.innerStruct.x = 10;
+    outerStructTypedef0.x = 10;
+    outerStructTypedef0.innerStructTypedef.x = 10;
+    outerStruct1.x = 10;
+    outerStruct1.innerStruct.x = 10;
+    outerStructTypedef1.x = 10;
+    outerStructTypedef1.innerStructTypedef.x = 10;
+    for (int i = 0; i < outerStruct0.x; i++) {}
+    for (int i = 0; i < outerStruct0.innerStruct.x; i++) {}
+    for (int i = 0; i < outerStructTypedef0.x; i++) {}
+    for (int i = 0; i < outerStructTypedef0.innerStructTypedef.x; i++) {}
+    for (int i = 0; i < outerStruct1.x; i++) {}
+    for (int i = 0; i < outerStruct1.innerStruct.x; i++) {}
+    for (int i = 0; i < outerStructTypedef1.x; i++) {}
+    for (int i = 0; i < outerStructTypedef1.innerStructTypedef.x; i++) {}
 
     for (int i = 0; i < 10 + 1; i++) {}
     for (int i = 0; i < 10 - 1; i++) {}
@@ -137,26 +137,26 @@ void test_idiomatize_loops()
         int array2[10] = {i};
         int array3[10] = {i, i, i, i, i, i, i, i, i, i};
 
-        outerStruct0.i = i;
-        outerStruct0.innerStruct.i = i;
-        outerStructTypedef0.i = i;
-        outerStructTypedef0.innerStructTypedef.i = i;
-        outerStruct1.i = i;
-        outerStruct1.innerStruct.i = i;
-        outerStructTypedef1.i = i;
-        outerStructTypedef1.innerStructTypedef.i = i;
+        outerStruct0.x = i;
+        outerStruct0.innerStruct.x = i;
+        outerStructTypedef0.x = i;
+        outerStructTypedef0.innerStructTypedef.x = i;
+        outerStruct1.x = i;
+        outerStruct1.innerStruct.x = i;
+        outerStructTypedef1.x = i;
+        outerStructTypedef1.innerStructTypedef.x = i;
         struct OuterStruct outerStruct2 = { i, { i } };
         OuterStructTypedef outerStructTypedef2 = { i, { i } };
-        struct OuterStruct outerStruct3 = { .i = i, .innerStruct = { .i = i } };
-        OuterStructTypedef outerStructTypedef3 = { .i = i, .innerStructTypedef = { .i = i } };
+        struct OuterStruct outerStruct3 = { .x = i, .innerStruct = { .x = i } };
+        OuterStructTypedef outerStructTypedef3 = { .x = i, .innerStructTypedef = { .x = i } };
 
         a = array0[i];
         array0[i] = a;
         a = array1[i];
         array1[i] = a;
         struct OuterStruct outerStructs[10];
-        outerStructs[i].i = a;
-        outerStructs[i].innerStruct.i = a;
+        outerStructs[i].x = a;
+        outerStructs[i].innerStruct.x = a;
 
         a = b + i;
         a = i - b;
@@ -198,9 +198,9 @@ void test_idiomatize_loops()
             i, 
             &a, 
             (int[]){i, i, i, i, i, i, i, i, i, i}, 
-            (struct OuterStruct){ .i = i, .innerStruct = { .i = i } },
+            (struct OuterStruct){ .x = i, .innerStruct = { .x = i } },
             &outerStruct0, 
-            (OuterStructTypedef){ .i = i, .innerStructTypedef = { .i = i } },
+            (OuterStructTypedef){ .x = i, .innerStructTypedef = { .x = i } },
             &outerStructTypedef0
         );
     }
@@ -250,22 +250,22 @@ static void receive_integers_for_l
     for (int i = array[0]; i < 10; i++) {}
     for (int i = array[a]; i < 10; i++) {}
 
-    outerStruct.i = 0;
-    outerStruct.innerStruct.i = 0;
-    outerStruct_p->i = 0;
-    outerStruct_p->innerStruct.i = 0;
-    outerStructTypedef.i = 0;
-    outerStructTypedef.innerStructTypedef.i = 0;
-    outerStructTypedef_p->i = 0;
-    outerStructTypedef_p->innerStructTypedef.i = 0;
-    for (int i = outerStruct.i; i < 10; i++) {}
-    for (int i = outerStruct.innerStruct.i; i < 10; i++) {}
-    for (int i = outerStruct_p->i; i < 10; i++) {}
-    for (int i = outerStruct_p->innerStruct.i; i < 10; i++) {}
-    for (int i = outerStructTypedef.i; i < 10; i++) {}
-    for (int i = outerStructTypedef.innerStructTypedef.i; i < 10; i++) {}
-    for (int i = outerStructTypedef_p->i; i < 10; i++) {}
-    for (int i = outerStructTypedef_p->innerStructTypedef.i; i < 10; i++) {}
+    outerStruct.x = 0;
+    outerStruct.innerStruct.x = 0;
+    outerStruct_p->x = 0;
+    outerStruct_p->innerStruct.x = 0;
+    outerStructTypedef.x = 0;
+    outerStructTypedef.innerStructTypedef.x = 0;
+    outerStructTypedef_p->x = 0;
+    outerStructTypedef_p->innerStructTypedef.x = 0;
+    for (int i = outerStruct.x; i < 10; i++) {}
+    for (int i = outerStruct.innerStruct.x; i < 10; i++) {}
+    for (int i = outerStruct_p->x; i < 10; i++) {}
+    for (int i = outerStruct_p->innerStruct.x; i < 10; i++) {}
+    for (int i = outerStructTypedef.x; i < 10; i++) {}
+    for (int i = outerStructTypedef.innerStructTypedef.x; i < 10; i++) {}
+    for (int i = outerStructTypedef_p->x; i < 10; i++) {}
+    for (int i = outerStructTypedef_p->innerStructTypedef.x; i < 10; i++) {}
 }
 
 static void receive_integers_for_n
@@ -289,22 +289,22 @@ static void receive_integers_for_n
     for (int i = 0; i < array[0]; i++) {}
     for (int i = 0; i < array[a]; i++) {}
 
-    outerStruct.i = 10;
-    outerStruct.innerStruct.i = 10;
-    outerStruct_p->i = 10;
-    outerStruct_p->innerStruct.i = 10;
-    outerStructTypedef.i = 10;
-    outerStructTypedef.innerStructTypedef.i = 10;
-    outerStruct_p->i = 10;
-    outerStruct_p->innerStruct.i = 10;
-    for (int i = 0; i < outerStruct.i; i++) {}
-    for (int i = 0; i < outerStruct.innerStruct.i; i++) {}
-    for (int i = 0; i < outerStruct_p->i; i++) {}
-    for (int i = 0; i < outerStruct_p->innerStruct.i; i++) {}
-    for (int i = 0; i < outerStructTypedef.i; i++) {}
-    for (int i = 0; i < outerStructTypedef.innerStructTypedef.i; i++) {}
-    for (int i = 0; i < outerStructTypedef_p->i; i++) {}
-    for (int i = 0; i < outerStructTypedef_p->innerStructTypedef.i; i++) {}
+    outerStruct.x = 10;
+    outerStruct.innerStruct.x = 10;
+    outerStruct_p->x = 10;
+    outerStruct_p->innerStruct.x = 10;
+    outerStructTypedef.x = 10;
+    outerStructTypedef.innerStructTypedef.x = 10;
+    outerStruct_p->x = 10;
+    outerStruct_p->innerStruct.x = 10;
+    for (int i = 0; i < outerStruct.x; i++) {}
+    for (int i = 0; i < outerStruct.innerStruct.x; i++) {}
+    for (int i = 0; i < outerStruct_p->x; i++) {}
+    for (int i = 0; i < outerStruct_p->innerStruct.x; i++) {}
+    for (int i = 0; i < outerStructTypedef.x; i++) {}
+    for (int i = 0; i < outerStructTypedef.innerStructTypedef.x; i++) {}
+    for (int i = 0; i < outerStructTypedef_p->x; i++) {}
+    for (int i = 0; i < outerStructTypedef_p->innerStructTypedef.x; i++) {}
 }
 
 static int receive_and_return_integers_for_body
@@ -325,14 +325,14 @@ static int receive_and_return_integers_for_body
 
         array[0] = i;
 
-        outerStruct.i = i;
-        outerStruct.innerStruct.i = i;
-        outerStruct_p->i = i;
-        outerStruct_p->innerStruct.i = i;
-        outerStructTypedef.i = i;
-        outerStructTypedef.innerStructTypedef.i = i;
-        outerStructTypedef_p->i = i;
-        outerStructTypedef_p->innerStructTypedef.i = i;
+        outerStruct.x = i;
+        outerStruct.innerStruct.x = i;
+        outerStruct_p->x = i;
+        outerStruct_p->innerStruct.x = i;
+        outerStructTypedef.x = i;
+        outerStructTypedef.innerStructTypedef.x = i;
+        outerStructTypedef_p->x = i;
+        outerStructTypedef_p->innerStructTypedef.x = i;
 
         a = array[i];
         array[i] = a;
