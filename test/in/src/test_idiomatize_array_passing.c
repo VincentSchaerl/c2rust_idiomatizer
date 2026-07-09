@@ -9,7 +9,7 @@ void test_idiomatize_array_passing()
     printf("End of test_idiomatize_array_passing().\n");
 }
 
-void fill_array(int* array, int size)
+static void fill_array(int* array, int size)
 {
     for (int i = 0; i < size; i++)
     {

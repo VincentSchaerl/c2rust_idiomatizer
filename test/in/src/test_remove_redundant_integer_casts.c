@@ -4,11 +4,9 @@
 #include "test_remove_redundant_integer_casts.h"
 #include "nested_structs.h"
 
-static struct OuterStruct outerStruct0;
-
-static OuterStructTypedef outerStructTypedef0;
-
 static int c;
+static struct OuterStruct outerStruct0;
+static OuterStructTypedef outerStructTypedef0;
 
 void test_remove_redundant_integer_casts()
 {
@@ -45,7 +43,7 @@ void test_remove_redundant_integer_casts()
     printf("End of test_remove_redundant_integer_casts().\n");
 }
 
-int receive_and_return_integers(int d, struct OuterStruct outerStruct, OuterStructTypedef outerStructTypedef)
+static int receive_and_return_integers(int d, struct OuterStruct outerStruct, OuterStructTypedef outerStructTypedef)
 {
     d = 26;
 
