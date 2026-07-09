@@ -5,14 +5,16 @@ use analysis::{
     collect_function_contexts, collect_function_param_types, collect_global_vars,
     collect_struct_fields, pat_name,
 };
-use cast::{remove_cast_if_redundant, type_info_from_ty};
+use cast::{
+    remove_cast_if_redundant, remove_casts_if_redundant_for_expected_type, type_info_from_ty,
+};
 
 use c2rust_refactor::command::{DriverCommand, Registry};
 use c2rust_refactor::driver::Phase;
 
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
-use rustc_ast::{Block, Crate, Expr, ExprKind, Local, LocalKind};
+use rustc_ast::{Block, Crate, Expr, ExprKind, Local, LocalKind, UnOp};
 use rustc_span::Span;
 
 use std::collections::HashMap;
@@ -30,6 +32,8 @@ struct BitWidths {
 enum TypeInfo {
     Integer(&'static str),
     Struct(String),
+    Pointer(Box<TypeInfo>),
+    Array(Box<TypeInfo>),
 }
 
 #[derive(Clone, Debug)]
@@ -110,16 +114,22 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
             if let Some(name) = local_name(local) {
                 self.insert_local_var(name, expected_type.clone());
             }
-            if let TypeInfo::Integer(expected_type_name) = expected_type {
-                match local.kind {
-                    LocalKind::Init(ref mut init) => {
-                        remove_cast_if_redundant(init, expected_type_name, &self.bit_widths);
-                    }
-                    LocalKind::InitElse(ref mut init, _) => {
-                        remove_cast_if_redundant(init, expected_type_name, &self.bit_widths);
-                    }
-                    LocalKind::Decl => {}
+            match local.kind {
+                LocalKind::Init(ref mut init) => {
+                    remove_casts_if_redundant_for_expected_type(
+                        init,
+                        &expected_type,
+                        &self.bit_widths,
+                    );
                 }
+                LocalKind::InitElse(ref mut init, _) => {
+                    remove_casts_if_redundant_for_expected_type(
+                        init,
+                        &expected_type,
+                        &self.bit_widths,
+                    );
+                }
+                LocalKind::Decl => {}
             }
         }
         mut_visit::noop_visit_local(local, self);
@@ -128,7 +138,9 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
     fn visit_expr(&mut self, expr: &mut P<Expr>) {
         match expr.kind {
             ExprKind::Assign(ref lhs, ref mut rhs, _) => {
-                if let Some(expected_type_name) = self.expected_integer_type_for_assignment_lhs(lhs) {
+                if let Some(TypeInfo::Integer(expected_type_name)) =
+                    self.expected_type_for_assignment_lhs(lhs)
+                {
                     remove_cast_if_redundant(rhs, expected_type_name, &self.bit_widths);
                 }
             }
@@ -144,11 +156,7 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
                     {
                         for (arg, expected_type) in args.iter_mut().zip(param_types.into_iter()) {
                             if let Some(TypeInfo::Integer(expected_type_name)) = expected_type {
-                                remove_cast_if_redundant(
-                                    arg,
-                                    expected_type_name,
-                                    &self.bit_widths,
-                                );
+                                remove_cast_if_redundant(arg, expected_type_name, &self.bit_widths);
                             }
                         }
                     }
@@ -206,36 +214,54 @@ impl RemoveRedundantIntegerCasts {
             .map(|(_, context)| context)
     }
 
-    fn expected_integer_type_for_assignment_lhs(&self, lhs: &Expr) -> Option<&'static str> {
-        if let Some(var_name) = expr_path_last_segment(lhs) {
-            if let Some(TypeInfo::Integer(type_name)) = self.lookup_var_type(&var_name) {
-                return Some(type_name);
-            }
-        }
-        if let Some((root_name, fields)) = expr_field_chain(lhs) {
-            return self.resolve_field_chain_to_integer_type(&root_name, &fields);
-        }
-        None
+    fn expected_type_for_assignment_lhs(&self, lhs: &Expr) -> Option<TypeInfo> {
+        self.type_info_for_expr(lhs)
     }
 
-    fn resolve_field_chain_to_integer_type(
-        &self,
-        root_name: &str,
-        fields: &[String],
-    ) -> Option<&'static str> {
-        let mut current_type = self.lookup_var_type(root_name)?;
-        for field_name in fields {
-            let struct_name = match current_type {
-                TypeInfo::Struct(ref struct_name) => struct_name.clone(),
-                TypeInfo::Integer(_) => return None,
-            };
-            let field_types = self.struct_fields.get(&struct_name)?;
-            current_type = field_types.get(field_name)?.clone();
+    fn type_info_for_expr(&self, expr: &Expr) -> Option<TypeInfo> {
+        match expr.kind {
+            ExprKind::Path(_, ref path) => {
+                let name = path.segments.last()?.ident.name.to_string();
+                self.lookup_var_type(&name)
+            }
+            ExprKind::Field(ref base, ident) => {
+                let base_type = self.type_info_for_expr(base)?;
+                self.field_type(base_type, &ident.name.to_string())
+            }
+            ExprKind::Unary(UnOp::Deref, ref inner) => {
+                let pointer_type = self.type_info_for_expr(inner)?;
+                match pointer_type {
+                    TypeInfo::Pointer(inner_type) => Some(*inner_type),
+                    _ => None,
+                }
+            }
+            ExprKind::Index(ref base, _) => {
+                let base_type = self.type_info_for_expr(base)?;
+                match base_type {
+                    TypeInfo::Array(element_type) => Some(*element_type),
+                    TypeInfo::Pointer(element_type) => Some(*element_type),
+                    _ => None,
+                }
+            }
+            ExprKind::MethodCall(ref segment, ref receiver, _, _) => {
+                let method_name = segment.ident.name.to_string();
+                if method_name == "offset" {
+                    return self.type_info_for_expr(receiver);
+                }
+                None
+            }
+            ExprKind::Paren(ref inner) => self.type_info_for_expr(inner),
+            _ => None,
         }
-        match current_type {
-            TypeInfo::Integer(type_name) => Some(type_name),
-            TypeInfo::Struct(_) => None,
-        }
+    }
+
+    fn field_type(&self, base_type: TypeInfo, field_name: &str) -> Option<TypeInfo> {
+        let struct_name = match base_type {
+            TypeInfo::Struct(struct_name) => struct_name,
+            _ => return None,
+        };
+        let field_types = self.struct_fields.get(&struct_name)?;
+        field_types.get(field_name).cloned()
     }
 }
 
@@ -246,21 +272,6 @@ fn local_name(local: &Local) -> Option<String> {
 fn expr_path_last_segment(expr: &Expr) -> Option<String> {
     match expr.kind {
         ExprKind::Path(_, ref path) => path.segments.last().map(|s| s.ident.name.to_string()),
-        _ => None,
-    }
-}
-
-fn expr_field_chain(expr: &Expr) -> Option<(String, Vec<String>)> {
-    match expr.kind {
-        ExprKind::Field(ref base, ident) => {
-            let (root, mut fields) = expr_field_chain(base)?;
-            fields.push(ident.name.to_string());
-            Some((root, fields))
-        }
-        ExprKind::Path(_, ref path) => {
-            let root = path.segments.last()?.ident.name.to_string();
-            Some((root, Vec::new()))
-        }
         _ => None,
     }
 }

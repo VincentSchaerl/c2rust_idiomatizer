@@ -1,7 +1,13 @@
 use super::{BitWidths, TypeInfo};
 
 use rustc_ast::ptr::P;
-use rustc_ast::{Expr, ExprKind, LitKind, Ty, TyKind};
+use rustc_ast::{Expr, ExprKind, LitKind, Ty, TyKind, UnOp};
+
+#[derive(Clone, Copy, Debug)]
+enum IntegerLiteralValue {
+    NonNegative(u128),
+    Negative(u128),
+}
 
 pub(super) fn remove_cast_if_redundant(
     expr: &mut P<Expr>,
@@ -29,6 +35,30 @@ pub(super) fn remove_cast_if_redundant(
     *expr = inner_expr.clone();
 }
 
+pub(super) fn remove_casts_if_redundant_for_expected_type(
+    expr: &mut P<Expr>,
+    expected_type: &TypeInfo,
+    bit_widths: &BitWidths,
+) {
+    match expected_type {
+        TypeInfo::Integer(expected_type_name) => {
+            remove_cast_if_redundant(expr, *expected_type_name, bit_widths);
+        }
+        TypeInfo::Array(element_type) => match expr.kind {
+            ExprKind::Array(ref mut elements) => {
+                for element in elements.iter_mut() {
+                    remove_casts_if_redundant_for_expected_type(element, element_type, bit_widths);
+                }
+            }
+            ExprKind::Repeat(ref mut element, _) => {
+                remove_casts_if_redundant_for_expected_type(element, element_type, bit_widths);
+            }
+            _ => {}
+        },
+        TypeInfo::Pointer(_) | TypeInfo::Struct(_) => {}
+    }
+}
+
 pub(super) fn type_info_from_ty(ty: &Ty, bit_widths: &BitWidths) -> Option<TypeInfo> {
     if let Some(type_name) = integer_type_name(ty, bit_widths) {
         return Some(TypeInfo::Integer(type_name));
@@ -37,6 +67,14 @@ pub(super) fn type_info_from_ty(ty: &Ty, bit_widths: &BitWidths) -> Option<TypeI
         TyKind::Path(None, ref path) => {
             let struct_name = path.segments.last()?.ident.name.to_string();
             Some(TypeInfo::Struct(struct_name))
+        }
+        TyKind::Ptr(ref mut_ty) => {
+            let pointee_type = type_info_from_ty(&mut_ty.ty, bit_widths)?;
+            Some(TypeInfo::Pointer(Box::new(pointee_type)))
+        }
+        TyKind::Array(ref element_ty, _) => {
+            let element_type = type_info_from_ty(element_ty, bit_widths)?;
+            Some(TypeInfo::Array(Box::new(element_type)))
         }
         _ => None,
     }
@@ -81,18 +119,34 @@ pub(super) fn integer_type_name(ty: &Ty, bit_widths: &BitWidths) -> Option<&'sta
     }
 }
 
-fn unsuffixed_integer_literal_value(expr: &Expr) -> Option<u128> {
-    let lit = match &expr.kind {
-        ExprKind::Lit(lit) => lit,
-        _ => return None,
-    };
-    if !matches!(lit.kind, LitKind::Int(..)) {
-        return None;
+fn unsuffixed_integer_literal_value(expr: &Expr) -> Option<IntegerLiteralValue> {
+    match expr.kind {
+        ExprKind::Lit(ref lit) => {
+            if !matches!(lit.kind, LitKind::Int(..)) {
+                return None;
+            }
+            if lit.token_lit.suffix.is_some() {
+                return None;
+            }
+            let value = parse_integer_literal(lit.token_lit.symbol.as_str().as_ref())?;
+            Some(IntegerLiteralValue::NonNegative(value))
+        }
+        ExprKind::Unary(UnOp::Neg, ref inner_expr) => {
+            let lit = match inner_expr.kind {
+                ExprKind::Lit(ref lit) => lit,
+                _ => return None,
+            };
+            if !matches!(lit.kind, LitKind::Int(..)) {
+                return None;
+            }
+            if lit.token_lit.suffix.is_some() {
+                return None;
+            }
+            let magnitude = parse_integer_literal(lit.token_lit.symbol.as_str().as_ref())?;
+            Some(IntegerLiteralValue::Negative(magnitude))
+        }
+        _ => None,
     }
-    if lit.token_lit.suffix.is_some() {
-        return None;
-    }
-    parse_integer_literal(lit.token_lit.symbol.as_str().as_ref())
 }
 
 fn parse_integer_literal(raw: &str) -> Option<u128> {
@@ -108,7 +162,18 @@ fn parse_integer_literal(raw: &str) -> Option<u128> {
     }
 }
 
-fn integer_value_fits_type(value: u128, ty: &str, pointer_bits: u32) -> bool {
+fn integer_value_fits_type(value: IntegerLiteralValue, ty: &str, pointer_bits: u32) -> bool {
+    match value {
+        IntegerLiteralValue::NonNegative(value) => {
+            nonnegative_integer_value_fits_type(value, ty, pointer_bits)
+        }
+        IntegerLiteralValue::Negative(magnitude) => {
+            negative_integer_value_fits_type(magnitude, ty, pointer_bits)
+        }
+    }
+}
+
+fn nonnegative_integer_value_fits_type(value: u128, ty: &str, pointer_bits: u32) -> bool {
     match ty {
         "i8" => value <= i8::MAX as u128,
         "i16" => value <= i16::MAX as u128,
@@ -129,6 +194,22 @@ fn integer_value_fits_type(value: u128, ty: &str, pointer_bits: u32) -> bool {
     }
 }
 
+fn negative_integer_value_fits_type(magnitude: u128, ty: &str, pointer_bits: u32) -> bool {
+    match ty {
+        "i8" => magnitude <= signed_min_magnitude_for_bits(8),
+        "i16" => magnitude <= signed_min_magnitude_for_bits(16),
+        "i32" => magnitude <= signed_min_magnitude_for_bits(32),
+        "i64" => magnitude <= signed_min_magnitude_for_bits(64),
+        "i128" => magnitude <= signed_min_magnitude_for_bits(128),
+
+        "isize" => magnitude <= signed_min_magnitude_for_bits(pointer_bits),
+
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => false,
+
+        _ => false,
+    }
+}
+
 fn signed_max_for_bits(bits: u32) -> u128 {
     match bits {
         8 => i8::MAX as u128,
@@ -136,6 +217,17 @@ fn signed_max_for_bits(bits: u32) -> u128 {
         32 => i32::MAX as u128,
         64 => i64::MAX as u128,
         128 => i128::MAX as u128,
+        _ => 0,
+    }
+}
+
+fn signed_min_magnitude_for_bits(bits: u32) -> u128 {
+    match bits {
+        8 => 1u128 << 7,
+        16 => 1u128 << 15,
+        32 => 1u128 << 31,
+        64 => 1u128 << 63,
+        128 => 1u128 << 127,
         _ => 0,
     }
 }

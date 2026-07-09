@@ -2,9 +2,7 @@ use super::cast::{integer_type_name, type_info_from_ty};
 use super::{BitWidths, FunctionContext, TypeInfo};
 
 use rustc_ast::ptr::P;
-use rustc_ast::{
-    Crate, FnRetTy, Item, ItemKind, ModKind, Pat, PatKind, VariantData,
-};
+use rustc_ast::{Crate, FnRetTy, Item, ItemKind, ModKind, Pat, PatKind, VariantData};
 use rustc_span::Span;
 
 use std::collections::HashMap;
