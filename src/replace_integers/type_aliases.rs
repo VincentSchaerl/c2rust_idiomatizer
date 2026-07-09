@@ -63,6 +63,10 @@ fn expected_alias_replacement(name: &str) -> Option<&'static str> {
         "__int64_t" | "int64_t" => Some("i64"),
         "__uint64_t" | "uint64_t" => Some("u64"),
 
+        "intptr_t" => Some("isize"),
+        "uintptr_t" => Some("usize"),
+        "size_t" => Some("usize"),
+
         _ => None,
     }
 }
