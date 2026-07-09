@@ -1,42 +1,42 @@
 #!/usr/bin/env bash
 set -e
 set -x
-cd "$(dirname "$0")"
 
-rm -f in/compile_commands.json
-rm -rf out/*
-mkdir -p out/transpile
-mkdir -p out/refactor
+test_dir="$(cd "$(dirname "$0")" && pwd)"
+project_root="$(cd "$test_dir/.." && pwd)"
+c2rust_dir="$project_root/lib/c2rust/target/debug"
+plugin_dir="$project_root/target/debug"
 
-cd in
-make clean
-make run
-make clean
-bear -- make
-cd ..
-~/projects/c2rust_idiomatizer/lib/c2rust/target/debug/c2rust-transpile \
+rm -f "$test_dir/in/compile_commands.json"
+rm -rf "$test_dir/out/"*
+mkdir -p "$test_dir/out/transpile"
+mkdir -p "$test_dir/out/refactor"
+
+make -C "$test_dir/in" clean
+make -C "$test_dir/in" run
+make -C "$test_dir/in" clean
+bear --output "$test_dir/in/compile_commands.json" -- make -C "$test_dir/in"
+"$c2rust_dir/c2rust-transpile" \
   --binary main \
   --thin-binaries \
-  --output-dir out/transpile \
-  in/compile_commands.json
-cd out/transpile
-cargo build
-cargo run
-cd ../..
+  --output-dir "$test_dir/out/transpile" \
+  "$test_dir/in/compile_commands.json"
+cargo build --manifest-path "$test_dir/out/transpile/Cargo.toml"
+cargo run --manifest-path "$test_dir/out/transpile/Cargo.toml"
 
-cp -r out/transpile/* out/refactor
-cd out/refactor
-~/projects/c2rust_idiomatizer/lib/c2rust/target/debug/c2rust-refactor \
+cp -r "$test_dir/out/transpile/"* "$test_dir/out/refactor"
+cd "$test_dir/out/refactor"
+"$c2rust_dir/c2rust-refactor" \
   --cargo \
-  --plugin-dir ~/projects/c2rust_idiomatizer/target/debug \
+  --plugin-dir "$plugin_dir" \
   --plugin-name c2rust_idiomatizer \
   --rewrite-mode inplace \
   replace_integers
-~/projects/c2rust_idiomatizer/lib/c2rust/target/debug/c2rust-refactor \
+"$c2rust_dir/c2rust-refactor" \
   --cargo \
-  --plugin-dir ~/projects/c2rust_idiomatizer/target/debug \
+  --plugin-dir "$plugin_dir" \
   --plugin-name c2rust_idiomatizer \
   --rewrite-mode inplace \
   remove_redundant_integer_casts
-cargo build
-cargo run
+cargo build --manifest-path "$test_dir/out/refactor/Cargo.toml"
+cargo run --manifest-path "$test_dir/out/refactor/Cargo.toml"
