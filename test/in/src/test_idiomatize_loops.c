@@ -37,6 +37,7 @@ void test_idiomatize_loops()
 
     a = 0;
     array0[0] = 0;
+    array1[0] = 0;
     for (int i = array0[0]; i < 10; i++) {}
     for (int i = array0[a]; i < 10; i++) {}
     for (int i = array1[0]; i < 10; i++) {}
