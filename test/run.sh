@@ -21,6 +21,7 @@ bear --output "$test_dir/in/compile_commands.json" -- make -C "$test_dir/in"
   --thin-binaries \
   --output-dir "$test_dir/out/transpile" \
   "$test_dir/in/compile_commands.json"
+  cargo fmt --manifest-path "$test_dir/out/transpile/Cargo.toml"
 cargo build --manifest-path "$test_dir/out/transpile/Cargo.toml"
 cargo run --manifest-path "$test_dir/out/transpile/Cargo.toml"
 
@@ -38,5 +39,6 @@ cd "$test_dir/out/refactor"
   --plugin-name c2rust_idiomatizer \
   --rewrite-mode inplace \
   remove_redundant_integer_casts
+cargo fmt --manifest-path "$test_dir/out/refactor/Cargo.toml"
 cargo build --manifest-path "$test_dir/out/refactor/Cargo.toml"
 cargo run --manifest-path "$test_dir/out/refactor/Cargo.toml"
