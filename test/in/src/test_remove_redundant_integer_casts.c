@@ -32,7 +32,7 @@ void test_remove_redundant_integer_casts()
 
     // Initialization of an array
     int array0[4] = {6, -7, 8, -9};
-    int array1[] = {10, -11, 12, -13};
+    int array1[] = {012, -0xB, 12, -13};
 
     // Assignment to an element of an array
     a = 0;
