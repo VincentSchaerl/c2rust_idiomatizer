@@ -2,6 +2,8 @@
 
 #include "test_idiomatize_array_passing.h"
 
+static void fill_array(int* array, int size);
+
 void test_idiomatize_array_passing()
 {
     int array0[10];

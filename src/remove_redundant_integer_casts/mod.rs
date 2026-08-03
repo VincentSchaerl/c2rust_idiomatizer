@@ -14,7 +14,7 @@ use c2rust_refactor::driver::Phase;
 
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
-use rustc_ast::{Block, Crate, Expr, ExprKind, Local, LocalKind, UnOp};
+use rustc_ast::{BinOpKind, Block, Crate, Expr, ExprKind, Local, LocalKind, UnOp};
 use rustc_span::Span;
 
 use std::collections::HashMap;
@@ -185,6 +185,11 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
                     }
                 }
             }
+            ExprKind::Binary(ref op, ref mut left, ref mut right) => {
+                if is_integer_comparison_op(op.node) {
+                    self.remove_redundant_casts_in_comparison(left, right);
+                }
+            }
             _ => {}
         }
         mut_visit::noop_visit_expr(expr, self);
@@ -216,6 +221,21 @@ impl RemoveRedundantIntegerCasts {
 
     fn expected_type_for_assignment_lhs(&self, lhs: &Expr) -> Option<TypeInfo> {
         self.type_info_for_expr(lhs)
+    }
+
+    fn remove_redundant_casts_in_comparison(
+        &self,
+        left: &mut P<Expr>,
+        right: &mut P<Expr>,
+    ) {
+        let left_type = self.type_info_for_expr(left);
+        let right_type = self.type_info_for_expr(right);
+        if let Some(TypeInfo::Integer(expected_type_name)) = right_type {
+            remove_cast_if_redundant(left, expected_type_name, &self.bit_widths);
+        }
+        if let Some(TypeInfo::Integer(expected_type_name)) = left_type {
+            remove_cast_if_redundant(right, expected_type_name, &self.bit_widths);
+        }
     }
 
     fn type_info_for_expr(&self, expr: &Expr) -> Option<TypeInfo> {
@@ -263,6 +283,18 @@ impl RemoveRedundantIntegerCasts {
         let field_types = self.struct_fields.get(&struct_name)?;
         field_types.get(field_name).cloned()
     }
+}
+
+fn is_integer_comparison_op(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Ne
+            | BinOpKind::Eq
+            | BinOpKind::Ge
+            | BinOpKind::Gt
+    )
 }
 
 fn local_name(local: &Local) -> Option<String> {
