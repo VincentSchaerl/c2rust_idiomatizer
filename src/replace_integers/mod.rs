@@ -35,13 +35,7 @@ pub fn register_replace_integers(reg: &mut Registry) {
             let c_int_bits = target.c_int_width.parse::<u32>().unwrap_or(32);
             let pointer_bits = target.pointer_width;
             let windows_llp64 = target.os == "windows" || target.env == "msvc";
-            let c_long_bits = if windows_llp64
-            {
-                32
-            } else
-            {
-                pointer_bits
-            };
+            let c_long_bits = if windows_llp64 { 32 } else { pointer_bits };
             let mut bit_widths = BitWidths
             {
                 c_short_bits: 16,
