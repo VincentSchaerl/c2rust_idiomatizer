@@ -14,7 +14,10 @@ use c2rust_refactor::driver::Phase;
 
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
-use rustc_ast::{BinOpKind, Block, Crate, Expr, ExprKind, Local, LocalKind, UnOp};
+use rustc_ast::{
+    BinOpKind, Block, Crate, Expr, ExprKind, Item, ItemKind, Local, LocalKind, ModKind, StmtKind,
+    UnOp,
+};
 use rustc_span::Span;
 
 use std::collections::HashMap;
@@ -90,7 +93,17 @@ fn remove_redundant_integer_casts(krate: &mut Crate, bit_widths: BitWidths) {
 }
 
 impl MutVisitor for RemoveRedundantIntegerCasts {
+    fn visit_crate(&mut self, krate: &mut Crate) {
+        remove_redundant_casts_in_item_initializers(&mut krate.items, &self.bit_widths);
+        mut_visit::noop_visit_crate(krate, self);
+    }
+
     fn visit_block(&mut self, block: &mut P<Block>) {
+        for stmt in block.stmts.iter_mut() {
+            if let StmtKind::Item(ref mut item) = stmt.kind {
+                remove_redundant_casts_in_item_initializer(item, &self.bit_widths);
+            }
+        }
         let function_context = self.function_context_for_block(block.span).cloned();
         if let Some(context) = function_context {
             self.local_scopes.push(context.params);
@@ -196,13 +209,49 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
     }
 }
 
+fn remove_redundant_casts_in_item_initializers(items: &mut Vec<P<Item>>, bit_widths: &BitWidths) {
+    for item in items.iter_mut() {
+        remove_redundant_casts_in_item_initializer(item, bit_widths);
+    }
+}
+
+fn remove_redundant_casts_in_item_initializer(item: &mut P<Item>, bit_widths: &BitWidths) {
+    match item.kind {
+        ItemKind::Static(ref ty, _, ref mut init) => {
+            if let Some(ref mut init_expr) = *init {
+                if let Some(expected_type) = type_info_from_ty(ty, bit_widths) {
+                    remove_casts_if_redundant_for_expected_type(
+                        init_expr,
+                        &expected_type,
+                        bit_widths,
+                    );
+                }
+            }
+        }
+        ItemKind::Const(_, ref ty, ref mut init) => {
+            if let Some(ref mut init_expr) = *init {
+                if let Some(expected_type) = type_info_from_ty(ty, bit_widths) {
+                    remove_casts_if_redundant_for_expected_type(
+                        init_expr,
+                        &expected_type,
+                        bit_widths,
+                    );
+                }
+            }
+        }
+        ItemKind::Mod(_, ModKind::Loaded(ref mut module_items, ..)) => {
+            remove_redundant_casts_in_item_initializers(module_items, bit_widths);
+        }
+        _ => {}
+    }
+}
+
 impl RemoveRedundantIntegerCasts {
     fn insert_local_var(&mut self, name: String, type_info: TypeInfo) {
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.insert(name, type_info);
         }
     }
-
     fn lookup_var_type(&self, name: &str) -> Option<TypeInfo> {
         for scope in self.local_scopes.iter().rev() {
             if let Some(type_info) = scope.get(name) {
