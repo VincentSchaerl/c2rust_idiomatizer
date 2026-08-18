@@ -27,44 +27,42 @@ struct ReplaceIntegers {
 }
 
 pub fn register_replace_integer_types(reg: &mut Registry) {
-    reg.register("replace_integer_types", |args|
-    {
+    reg.register("replace_integer_types", |args| {
         let args = args.to_vec();
-        Box::new(DriverCommand::new(Phase::Phase1, move |st, cx|
-        {
+        Box::new(DriverCommand::new(Phase::Phase1, move |st, cx| {
             let target = &cx.session().target;
-            let c_int_bits = target.c_int_width.parse::<u32>().unwrap_or(32);
+            let c_int_bits = target
+                .c_int_width
+                .parse::<u32>()
+                .expect("Invalid rustc target c_int_width");
             let pointer_bits = target.pointer_width;
             let windows_llp64 = target.os == "windows" || target.env == "msvc";
             let c_long_bits = if windows_llp64 { 32 } else { pointer_bits };
-            let mut bit_widths = BitWidths
-            {
+            let mut bit_widths = BitWidths {
                 c_char_bits: 8,
                 c_short_bits: 16,
                 c_int_bits,
                 c_long_bits,
                 c_longlong_bits: 64,
             };
-            for arg in &args
-            {
-                if let Some(value) = arg.strip_prefix("char-width=")
-                {
-                    bit_widths.c_char_bits = value.parse::<u32>().expect("Invalid value for char-width");
-                } else if let Some(value) = arg.strip_prefix("short-width=")
-                {
-                    bit_widths.c_short_bits = value.parse::<u32>().expect("Invalid value for short-width");
-                } else if let Some(value) = arg.strip_prefix("int-width=")
-                {
-                    bit_widths.c_int_bits = value
-                        .parse::<u32>().expect("Invalid value for int-width");
-                } else if let Some(value) = arg.strip_prefix("long-width=")
-                {
-                    bit_widths.c_long_bits = value.parse::<u32>().expect("Invalid value for long-width");
-                } else if let Some(value) = arg.strip_prefix("longlong-width=")
-                {
-                    bit_widths.c_longlong_bits = value.parse::<u32>().expect("Invalid value for longlong-width");
-                } else
-                {
+            for arg in &args {
+                if let Some(value) = arg.strip_prefix("char-width=") {
+                    bit_widths.c_char_bits =
+                        value.parse::<u32>().expect("Invalid value for char-width");
+                } else if let Some(value) = arg.strip_prefix("short-width=") {
+                    bit_widths.c_short_bits =
+                        value.parse::<u32>().expect("Invalid value for short-width");
+                } else if let Some(value) = arg.strip_prefix("int-width=") {
+                    bit_widths.c_int_bits =
+                        value.parse::<u32>().expect("Invalid value for int-width");
+                } else if let Some(value) = arg.strip_prefix("long-width=") {
+                    bit_widths.c_long_bits =
+                        value.parse::<u32>().expect("Invalid value for long-width");
+                } else if let Some(value) = arg.strip_prefix("longlong-width=") {
+                    bit_widths.c_longlong_bits = value
+                        .parse::<u32>()
+                        .expect("Invalid value for longlong-width");
+                } else {
                     panic!("Unknown argument for replace_integer_types: {}", arg);
                 }
             }
@@ -85,7 +83,12 @@ pub fn register_replace_integer_types(reg: &mut Registry) {
                 && bit_widths.c_long_bits <= bit_widths.c_longlong_bits)
             {
                 panic!(
-                    "Invalid C integer widths: expected widths in {{8, 16, 32, 64, 128}}, minimums char>=8, short>=16, int>=16, long>=32, long long>=64, and char <= short <= int <= long <= long long; got char={}, short={}, int={}, long={}, long long={}",
+                    concat!(
+                        "Invalid C integer widths: expected widths in {{8, 16, 32, 64, 128}}, ",
+                        "minimums char>=8, short>=16, int>=16, long>=32, long long>=64, ",
+                        "and char <= short <= int <= long <= long long; ",
+                        "got char={}, short={}, int={}, long={}, long long={}"
+                    ),
                     bit_widths.c_char_bits,
                     bit_widths.c_short_bits,
                     bit_widths.c_int_bits,
@@ -158,10 +161,7 @@ fn is_core_ffi_path(path: &rustc_ast::Path) -> bool {
         && path.segments[2].ident.name.as_str() == "ffi"
 }
 
-fn replacement_for_c_ffi_type_name(
-    name: &str,
-    bit_widths: &BitWidths,
-) -> Option<&'static str> {
+fn replacement_for_c_ffi_type_name(name: &str, bit_widths: &BitWidths) -> Option<&'static str> {
     match name {
         "c_schar" => Some(rust_int(bit_widths.c_char_bits, true)),
         "c_uchar" => Some(rust_int(bit_widths.c_char_bits, false)),
