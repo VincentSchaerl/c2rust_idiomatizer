@@ -32,7 +32,7 @@ cd "$test_dir/out/refactor"
   --plugin-dir "$plugin_dir" \
   --plugin-name c2rust_idiomatizer \
   --rewrite-mode inplace \
-  replace_integers
+  replace_integer_types
 "$c2rust_dir/c2rust-refactor" \
   --cargo \
   --plugin-dir "$plugin_dir" \

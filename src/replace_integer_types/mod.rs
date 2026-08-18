@@ -25,8 +25,8 @@ struct ReplaceIntegers {
     valid_aliases: HashMap<String, &'static str>,
 }
 
-pub fn register_replace_integers(reg: &mut Registry) {
-    reg.register("replace_integers", |args|
+pub fn register_replace_integer_types(reg: &mut Registry) {
+    reg.register("replace_integer_types", |args|
     {
         let args = args.to_vec();
         Box::new(DriverCommand::new(Phase::Phase1, move |st, cx|
@@ -60,7 +60,7 @@ pub fn register_replace_integers(reg: &mut Registry) {
                     bit_widths.c_longlong_bits = value.parse::<u32>().expect("Invalid value for longlong-width");
                 } else
                 {
-                    panic!("Unknown argument for replace_integers: {}", arg);
+                    panic!("Unknown argument for replace_integer_types: {}", arg);
                 }
             }
             if !(bit_widths.c_short_bits<= bit_widths.c_int_bits && bit_widths.c_int_bits <= bit_widths.c_long_bits
@@ -74,12 +74,12 @@ pub fn register_replace_integers(reg: &mut Registry) {
                     bit_widths.c_longlong_bits
                 );
             }
-            replace_integers(&mut st.krate_mut(), bit_widths);
+            replace_integer_types(&mut st.krate_mut(), bit_widths);
         }))
     });
 }
 
-fn replace_integers(krate: &mut Crate, bit_widths: BitWidths) {
+fn replace_integer_types(krate: &mut Crate, bit_widths: BitWidths) {
     let valid_aliases = validated_integer_aliases(krate);
     let mut visitor = ReplaceIntegers {
         bit_widths,
