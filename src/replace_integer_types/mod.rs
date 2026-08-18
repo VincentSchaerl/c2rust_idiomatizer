@@ -117,12 +117,18 @@ impl MutVisitor for ReplaceIntegers {
         if let TyKind::Path(ref mut qself, ref mut path) = ty.kind {
             let last = path.segments.last().map(|s| s.ident.name.to_string());
             if let Some(last) = last {
-                if let Some(replacement) =
-                    replacement_for_type_name(&last, &self.bit_widths, &self.valid_aliases)
-                {
+                if let Some(replacement) = self.valid_aliases.get(&last) {
                     *qself = None;
                     set_path_to_single_ident(path, replacement);
                     return;
+                }
+                if qself.is_none() && is_core_ffi_path(path) {
+                    if let Some(replacement) =
+                        replacement_for_c_ffi_type_name(&last, &self.bit_widths)
+                    {
+                        set_path_to_single_ident(path, replacement);
+                        return;
+                    }
                 }
             }
         }
@@ -145,14 +151,17 @@ fn remove_valid_integer_aliases_from_items(
     }
 }
 
-fn replacement_for_type_name(
+fn is_core_ffi_path(path: &rustc_ast::Path) -> bool {
+    path.is_global()
+        && path.segments.len() == 4
+        && path.segments[1].ident.name.as_str() == "core"
+        && path.segments[2].ident.name.as_str() == "ffi"
+}
+
+fn replacement_for_c_ffi_type_name(
     name: &str,
     bit_widths: &BitWidths,
-    valid_aliases: &HashMap<String, &'static str>,
 ) -> Option<&'static str> {
-    if let Some(replacement) = valid_aliases.get(name) {
-        return Some(*replacement);
-    }
     match name {
         "c_schar" => Some(rust_int(bit_widths.c_char_bits, true)),
         "c_uchar" => Some(rust_int(bit_widths.c_char_bits, false)),
