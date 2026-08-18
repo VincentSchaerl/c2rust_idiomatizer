@@ -81,42 +81,65 @@ pub(super) fn type_info_from_ty(ty: &Ty, bit_widths: &BitWidths) -> Option<TypeI
 }
 
 pub(super) fn integer_type_name(ty: &Ty, bit_widths: &BitWidths) -> Option<&'static str> {
-    let last = match ty.kind {
-        TyKind::Path(None, ref path) => path.segments.last().map(|s| s.ident.name.to_string())?,
+    let path = match ty.kind {
+        TyKind::Path(None, ref path) => path,
         _ => return None,
     };
-    match &*last {
-        "i8" => Some("i8"),
-        "i16" => Some("i16"),
-        "i32" => Some("i32"),
-        "i64" => Some("i64"),
-        "i128" => Some("i128"),
-        "isize" => Some("isize"),
+    if let Some(name) = unqualified_type_name(path) {
+        return match name {
+            "i8" => Some("i8"),
+            "i16" => Some("i16"),
+            "i32" => Some("i32"),
+            "i64" => Some("i64"),
+            "i128" => Some("i128"),
+            "isize" => Some("isize"),
 
-        "u8" => Some("u8"),
-        "u16" => Some("u16"),
-        "u32" => Some("u32"),
-        "u64" => Some("u64"),
-        "u128" => Some("u128"),
-        "usize" => Some("usize"),
+            "u8" => Some("u8"),
+            "u16" => Some("u16"),
+            "u32" => Some("u32"),
+            "u64" => Some("u64"),
+            "u128" => Some("u128"),
+            "usize" => Some("usize"),
 
-        "c_schar" => Some("i8"),
-        "c_uchar" => Some("u8"),
-
-        "c_short" => Some(rust_int(bit_widths.c_short_bits, true)),
-        "c_ushort" => Some(rust_int(bit_widths.c_short_bits, false)),
-
-        "c_int" => Some(rust_int(bit_widths.c_int_bits, true)),
-        "c_uint" => Some(rust_int(bit_widths.c_int_bits, false)),
-
-        "c_long" => Some(rust_int(bit_widths.c_long_bits, true)),
-        "c_ulong" => Some(rust_int(bit_widths.c_long_bits, false)),
-
-        "c_longlong" => Some(rust_int(bit_widths.c_longlong_bits, true)),
-        "c_ulonglong" => Some(rust_int(bit_widths.c_longlong_bits, false)),
-
-        _ => None,
+            _ => None,
+        };
     }
+    if is_core_ffi_path(path) {
+        let name = path.segments.last()?.ident.name.as_str();
+        return match name {
+            "c_schar" => Some("i8"),
+            "c_uchar" => Some("u8"),
+
+            "c_short" => Some(rust_int(bit_widths.c_short_bits, true)),
+            "c_ushort" => Some(rust_int(bit_widths.c_short_bits, false)),
+
+            "c_int" => Some(rust_int(bit_widths.c_int_bits, true)),
+            "c_uint" => Some(rust_int(bit_widths.c_int_bits, false)),
+
+            "c_long" => Some(rust_int(bit_widths.c_long_bits, true)),
+            "c_ulong" => Some(rust_int(bit_widths.c_long_bits, false)),
+
+            "c_longlong" => Some(rust_int(bit_widths.c_longlong_bits, true)),
+            "c_ulonglong" => Some(rust_int(bit_widths.c_longlong_bits, false)),
+
+            _ => None,
+        };
+    }
+    None
+}
+
+fn unqualified_type_name(path: &rustc_ast::Path) -> Option<&str> {
+    if path.is_global() || path.segments.len() != 1 {
+        return None;
+    }
+    Some(path.segments[0].ident.name.as_str())
+}
+
+fn is_core_ffi_path(path: &rustc_ast::Path) -> bool {
+    path.is_global()
+        && path.segments.len() == 4
+        && path.segments[1].ident.name.as_str() == "core"
+        && path.segments[2].ident.name.as_str() == "ffi"
 }
 
 fn unsuffixed_integer_literal_value(expr: &Expr) -> Option<IntegerLiteralValue> {

@@ -223,11 +223,7 @@ impl RemoveRedundantIntegerCasts {
         self.type_info_for_expr(lhs)
     }
 
-    fn remove_redundant_casts_in_comparison(
-        &self,
-        left: &mut P<Expr>,
-        right: &mut P<Expr>,
-    ) {
+    fn remove_redundant_casts_in_comparison(&self, left: &mut P<Expr>, right: &mut P<Expr>) {
         let left_type = self.type_info_for_expr(left);
         let right_type = self.type_info_for_expr(right);
         if let Some(TypeInfo::Integer(expected_type_name)) = right_type {
