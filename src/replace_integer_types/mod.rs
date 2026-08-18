@@ -14,6 +14,7 @@ use type_aliases::validated_integer_aliases;
 
 #[derive(Clone, Debug)]
 struct BitWidths {
+    c_char_bits: u32,
     c_short_bits: u32,
     c_int_bits: u32,
     c_long_bits: u32,
@@ -38,6 +39,7 @@ pub fn register_replace_integer_types(reg: &mut Registry) {
             let c_long_bits = if windows_llp64 { 32 } else { pointer_bits };
             let mut bit_widths = BitWidths
             {
+                c_char_bits: 8,
                 c_short_bits: 16,
                 c_int_bits,
                 c_long_bits,
@@ -45,7 +47,10 @@ pub fn register_replace_integer_types(reg: &mut Registry) {
             };
             for arg in &args
             {
-                if let Some(value) = arg.strip_prefix("short-width=")
+                if let Some(value) = arg.strip_prefix("char-width=")
+                {
+                    bit_widths.c_char_bits = value.parse::<u32>().expect("Invalid value for char-width");
+                } else if let Some(value) = arg.strip_prefix("short-width=")
                 {
                     bit_widths.c_short_bits = value.parse::<u32>().expect("Invalid value for short-width");
                 } else if let Some(value) = arg.strip_prefix("int-width=")
@@ -63,11 +68,25 @@ pub fn register_replace_integer_types(reg: &mut Registry) {
                     panic!("Unknown argument for replace_integer_types: {}", arg);
                 }
             }
-            if !(bit_widths.c_short_bits<= bit_widths.c_int_bits && bit_widths.c_int_bits <= bit_widths.c_long_bits
+            let valid_width = |bits: u32| matches!(bits, 8 | 16 | 32 | 64 | 128);
+            if !(valid_width(bit_widths.c_char_bits)
+                && valid_width(bit_widths.c_short_bits)
+                && valid_width(bit_widths.c_int_bits)
+                && valid_width(bit_widths.c_long_bits)
+                && valid_width(bit_widths.c_longlong_bits)
+                && bit_widths.c_char_bits >= 8
+                && bit_widths.c_short_bits >= 16
+                && bit_widths.c_int_bits >= 16
+                && bit_widths.c_long_bits >= 32
+                && bit_widths.c_longlong_bits >= 64
+                && bit_widths.c_char_bits <= bit_widths.c_short_bits
+                && bit_widths.c_short_bits <= bit_widths.c_int_bits
+                && bit_widths.c_int_bits <= bit_widths.c_long_bits
                 && bit_widths.c_long_bits <= bit_widths.c_longlong_bits)
             {
                 panic!(
-                    "Invalid C integer widths: expected short <= int <= long <= long long, got short={}, int={}, long={}, long long={}",
+                    "Invalid C integer widths: expected widths in {{8, 16, 32, 64, 128}}, minimums char>=8, short>=16, int>=16, long>=32, long long>=64, and char <= short <= int <= long <= long long; got char={}, short={}, int={}, long={}, long long={}",
+                    bit_widths.c_char_bits,
                     bit_widths.c_short_bits,
                     bit_widths.c_int_bits,
                     bit_widths.c_long_bits,
@@ -135,8 +154,8 @@ fn replacement_for_type_name(
         return Some(*replacement);
     }
     match name {
-        "c_schar" => Some("i8"),
-        "c_uchar" => Some("u8"),
+        "c_schar" => Some(rust_int(bit_widths.c_char_bits, true)),
+        "c_uchar" => Some(rust_int(bit_widths.c_char_bits, false)),
 
         "c_short" => Some(rust_int(bit_widths.c_short_bits, true)),
         "c_ushort" => Some(rust_int(bit_widths.c_short_bits, false)),
