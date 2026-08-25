@@ -99,23 +99,36 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
     }
 
     fn visit_block(&mut self, block: &mut P<Block>) {
+        let function_context = self.function_context_for_block(block.span).cloned();
+        if let Some(ref context) = function_context {
+            self.local_scopes.push(context.params.clone());
+            self.current_return_types.push(context.return_type);
+        } else {
+            self.local_scopes.push(HashMap::new());
+        }
         for stmt in block.stmts.iter_mut() {
             if let StmtKind::Item(ref mut item) = stmt.kind {
                 remove_redundant_casts_in_item_initializer(item, &self.bit_widths);
+                match item.kind {
+                    ItemKind::Static(ref ty, ..) => {
+                        if let Some(type_info) = type_info_from_ty(ty, &self.bit_widths) {
+                            self.insert_local_var(item.ident.name.to_string(), type_info);
+                        }
+                    }
+                    ItemKind::Const(_, ref ty, ..) => {
+                        if let Some(type_info) = type_info_from_ty(ty, &self.bit_widths) {
+                            self.insert_local_var(item.ident.name.to_string(), type_info);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
-        let function_context = self.function_context_for_block(block.span).cloned();
-        if let Some(context) = function_context {
-            self.local_scopes.push(context.params);
-            self.current_return_types.push(context.return_type);
-            mut_visit::noop_visit_block(block, self);
+        mut_visit::noop_visit_block(block, self);
+        if function_context.is_some() {
             self.current_return_types.pop();
-            self.local_scopes.pop();
-        } else {
-            self.local_scopes.push(HashMap::new());
-            mut_visit::noop_visit_block(block, self);
-            self.local_scopes.pop();
         }
+        self.local_scopes.pop();
     }
 
     fn visit_local(&mut self, local: &mut P<Local>) {
