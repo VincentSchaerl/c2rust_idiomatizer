@@ -1,4 +1,4 @@
-use super::{BitWidths, TypeInfo};
+use super::{BitWidths, CIntegerType, IntegerType, TypeInfo, TypePath};
 
 use rustc_ast::ptr::P;
 use rustc_ast::{Expr, ExprKind, LitKind, Ty, TyKind, UnOp};
@@ -11,25 +11,25 @@ enum IntegerLiteralValue {
 
 pub(super) fn remove_cast_if_redundant(
     expr: &mut P<Expr>,
-    expected_type_name: &'static str,
+    expected_type: IntegerType,
     bit_widths: &BitWidths,
 ) {
     let (inner_expr, cast_ty) = match expr.kind {
         ExprKind::Cast(ref inner_expr, ref cast_ty) => (inner_expr, cast_ty),
         _ => return,
     };
-    let cast_type_name = match integer_type_name(cast_ty, bit_widths) {
-        Some(name) => name,
+    let cast_type = match integer_type_from_ty(cast_ty) {
+        Some(ty) => ty,
         None => return,
     };
-    if expected_type_name != cast_type_name {
+    if expected_type != cast_type {
         return;
     }
     let value = match unsuffixed_integer_literal_value(inner_expr) {
         Some(value) => value,
         None => return,
     };
-    if !integer_value_fits_type(value, cast_type_name, bit_widths.pointer_bits) {
+    if !integer_value_fits_type(value, cast_type, bit_widths) {
         return;
     }
     *expr = inner_expr.clone();
@@ -41,8 +41,8 @@ pub(super) fn remove_casts_if_redundant_for_expected_type(
     bit_widths: &BitWidths,
 ) {
     match expected_type {
-        TypeInfo::Integer(expected_type_name) => {
-            remove_cast_if_redundant(expr, *expected_type_name, bit_widths);
+        TypeInfo::Integer(expected_integer_type) => {
+            remove_cast_if_redundant(expr, *expected_integer_type, bit_widths);
         }
         TypeInfo::Array(element_type) => match expr.kind {
             ExprKind::Array(ref mut elements) => {
@@ -55,51 +55,57 @@ pub(super) fn remove_casts_if_redundant_for_expected_type(
             }
             _ => {}
         },
-        TypeInfo::Pointer(_) | TypeInfo::Struct(_) => {}
     }
 }
 
-pub(super) fn type_info_from_ty(ty: &Ty, bit_widths: &BitWidths) -> Option<TypeInfo> {
-    if let Some(type_name) = integer_type_name(ty, bit_widths) {
-        return Some(TypeInfo::Integer(type_name));
+pub(super) fn type_info_from_ty(
+    ty: &Ty,
+    bit_widths: &BitWidths,
+    module_path: &[String],
+) -> Option<TypeInfo> {
+    if let Some(integer_type) = integer_type_from_ty(ty) {
+        if let IntegerType::C(c_type) = integer_type {
+            let _ = c_integer_width(c_type, bit_widths);
+        }
+        return Some(TypeInfo::Integer(integer_type));
     }
     match ty.kind {
         TyKind::Path(None, ref path) => {
-            let struct_name = path.segments.last()?.ident.name.to_string();
-            Some(TypeInfo::Struct(struct_name))
+            let struct_path = TypePath::from_ast_path(path, module_path)?;
+            Some(TypeInfo::Struct(struct_path))
         }
         TyKind::Ptr(ref mut_ty) => {
-            let pointee_type = type_info_from_ty(&mut_ty.ty, bit_widths)?;
+            let pointee_type = type_info_from_ty(&mut_ty.ty, bit_widths, module_path)?;
             Some(TypeInfo::Pointer(Box::new(pointee_type)))
         }
         TyKind::Array(ref element_ty, _) => {
-            let element_type = type_info_from_ty(element_ty, bit_widths)?;
+            let element_type = type_info_from_ty(element_ty, bit_widths, module_path)?;
             Some(TypeInfo::Array(Box::new(element_type)))
         }
         _ => None,
     }
 }
 
-pub(super) fn integer_type_name(ty: &Ty, bit_widths: &BitWidths) -> Option<&'static str> {
+pub(super) fn integer_type_from_ty(ty: &Ty) -> Option<IntegerType> {
     let path = match ty.kind {
         TyKind::Path(None, ref path) => path,
         _ => return None,
     };
     if let Some(name) = unqualified_type_name(path) {
         return match name {
-            "i8" => Some("i8"),
-            "i16" => Some("i16"),
-            "i32" => Some("i32"),
-            "i64" => Some("i64"),
-            "i128" => Some("i128"),
-            "isize" => Some("isize"),
+            "i8" => Some(IntegerType::Primitive("i8")),
+            "i16" => Some(IntegerType::Primitive("i16")),
+            "i32" => Some(IntegerType::Primitive("i32")),
+            "i64" => Some(IntegerType::Primitive("i64")),
+            "i128" => Some(IntegerType::Primitive("i128")),
+            "isize" => Some(IntegerType::Primitive("isize")),
 
-            "u8" => Some("u8"),
-            "u16" => Some("u16"),
-            "u32" => Some("u32"),
-            "u64" => Some("u64"),
-            "u128" => Some("u128"),
-            "usize" => Some("usize"),
+            "u8" => Some(IntegerType::Primitive("u8")),
+            "u16" => Some(IntegerType::Primitive("u16")),
+            "u32" => Some(IntegerType::Primitive("u32")),
+            "u64" => Some(IntegerType::Primitive("u64")),
+            "u128" => Some(IntegerType::Primitive("u128")),
+            "usize" => Some(IntegerType::Primitive("usize")),
 
             _ => None,
         };
@@ -107,20 +113,20 @@ pub(super) fn integer_type_name(ty: &Ty, bit_widths: &BitWidths) -> Option<&'sta
     if is_core_ffi_path(path) {
         let name = path.segments.last()?.ident.name.as_str();
         return match name {
-            "c_schar" => Some("i8"),
-            "c_uchar" => Some("u8"),
+            "c_schar" => Some(IntegerType::C(CIntegerType::SChar)),
+            "c_uchar" => Some(IntegerType::C(CIntegerType::UChar)),
 
-            "c_short" => Some(rust_int(bit_widths.c_short_bits, true)),
-            "c_ushort" => Some(rust_int(bit_widths.c_short_bits, false)),
+            "c_short" => Some(IntegerType::C(CIntegerType::Short)),
+            "c_ushort" => Some(IntegerType::C(CIntegerType::UShort)),
 
-            "c_int" => Some(rust_int(bit_widths.c_int_bits, true)),
-            "c_uint" => Some(rust_int(bit_widths.c_int_bits, false)),
+            "c_int" => Some(IntegerType::C(CIntegerType::Int)),
+            "c_uint" => Some(IntegerType::C(CIntegerType::UInt)),
 
-            "c_long" => Some(rust_int(bit_widths.c_long_bits, true)),
-            "c_ulong" => Some(rust_int(bit_widths.c_long_bits, false)),
+            "c_long" => Some(IntegerType::C(CIntegerType::Long)),
+            "c_ulong" => Some(IntegerType::C(CIntegerType::ULong)),
 
-            "c_longlong" => Some(rust_int(bit_widths.c_longlong_bits, true)),
-            "c_ulonglong" => Some(rust_int(bit_widths.c_longlong_bits, false)),
+            "c_longlong" => Some(IntegerType::C(CIntegerType::LongLong)),
+            "c_ulonglong" => Some(IntegerType::C(CIntegerType::ULongLong)),
 
             _ => None,
         };
@@ -185,51 +191,66 @@ fn parse_integer_literal(raw: &str) -> Option<u128> {
     }
 }
 
-fn integer_value_fits_type(value: IntegerLiteralValue, ty: &str, pointer_bits: u32) -> bool {
+fn integer_value_fits_type(
+    value: IntegerLiteralValue,
+    ty: IntegerType,
+    bit_widths: &BitWidths,
+) -> bool {
+    let (bits, signed) = integer_type_width_and_signedness(ty, bit_widths);
     match value {
         IntegerLiteralValue::NonNegative(value) => {
-            nonnegative_integer_value_fits_type(value, ty, pointer_bits)
+            if signed {
+                value <= signed_max_for_bits(bits)
+            } else {
+                value <= unsigned_max_for_bits(bits)
+            }
         }
         IntegerLiteralValue::Negative(magnitude) => {
-            negative_integer_value_fits_type(magnitude, ty, pointer_bits)
+            signed && magnitude <= signed_min_magnitude_for_bits(bits)
         }
     }
 }
 
-fn nonnegative_integer_value_fits_type(value: u128, ty: &str, pointer_bits: u32) -> bool {
+fn integer_type_width_and_signedness(ty: IntegerType, bit_widths: &BitWidths) -> (u32, bool) {
     match ty {
-        "i8" => value <= i8::MAX as u128,
-        "i16" => value <= i16::MAX as u128,
-        "i32" => value <= i32::MAX as u128,
-        "i64" => value <= i64::MAX as u128,
-        "i128" => value <= i128::MAX as u128,
+        IntegerType::Primitive(name) => match name {
+            "i8" => (8, true),
+            "i16" => (16, true),
+            "i32" => (32, true),
+            "i64" => (64, true),
+            "i128" => (128, true),
+            "isize" => (bit_widths.pointer_bits, true),
 
-        "u8" => value <= u8::MAX as u128,
-        "u16" => value <= u16::MAX as u128,
-        "u32" => value <= u32::MAX as u128,
-        "u64" => value <= u64::MAX as u128,
-        "u128" => true,
+            "u8" => (8, false),
+            "u16" => (16, false),
+            "u32" => (32, false),
+            "u64" => (64, false),
+            "u128" => (128, false),
+            "usize" => (bit_widths.pointer_bits, false),
 
-        "isize" => value <= signed_max_for_bits(pointer_bits),
-        "usize" => value <= unsigned_max_for_bits(pointer_bits),
-
-        _ => false,
+            _ => unreachable!("unsupported primitive integer type: {}", name),
+        },
+        IntegerType::C(c_type) => (
+            c_integer_width(c_type, bit_widths),
+            matches!(
+                c_type,
+                CIntegerType::SChar
+                    | CIntegerType::Short
+                    | CIntegerType::Int
+                    | CIntegerType::Long
+                    | CIntegerType::LongLong
+            ),
+        ),
     }
 }
 
-fn negative_integer_value_fits_type(magnitude: u128, ty: &str, pointer_bits: u32) -> bool {
-    match ty {
-        "i8" => magnitude <= signed_min_magnitude_for_bits(8),
-        "i16" => magnitude <= signed_min_magnitude_for_bits(16),
-        "i32" => magnitude <= signed_min_magnitude_for_bits(32),
-        "i64" => magnitude <= signed_min_magnitude_for_bits(64),
-        "i128" => magnitude <= signed_min_magnitude_for_bits(128),
-
-        "isize" => magnitude <= signed_min_magnitude_for_bits(pointer_bits),
-
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => false,
-
-        _ => false,
+fn c_integer_width(c_type: CIntegerType, bit_widths: &BitWidths) -> u32 {
+    match c_type {
+        CIntegerType::SChar | CIntegerType::UChar => bit_widths.c_char_bits,
+        CIntegerType::Short | CIntegerType::UShort => bit_widths.c_short_bits,
+        CIntegerType::Int | CIntegerType::UInt => bit_widths.c_int_bits,
+        CIntegerType::Long | CIntegerType::ULong => bit_widths.c_long_bits,
+        CIntegerType::LongLong | CIntegerType::ULongLong => bit_widths.c_longlong_bits,
     }
 }
 
@@ -240,7 +261,7 @@ fn signed_max_for_bits(bits: u32) -> u128 {
         32 => i32::MAX as u128,
         64 => i64::MAX as u128,
         128 => i128::MAX as u128,
-        _ => 0,
+        _ => unreachable!("unsupported signed integer width: {}", bits),
     }
 }
 
@@ -251,7 +272,7 @@ fn signed_min_magnitude_for_bits(bits: u32) -> u128 {
         32 => 1u128 << 31,
         64 => 1u128 << 63,
         128 => 1u128 << 127,
-        _ => 0,
+        _ => unreachable!("unsupported signed integer width: {}", bits),
     }
 }
 
@@ -262,22 +283,6 @@ fn unsigned_max_for_bits(bits: u32) -> u128 {
         32 => u32::MAX as u128,
         64 => u64::MAX as u128,
         128 => u128::MAX,
-        _ => 0,
-    }
-}
-
-fn rust_int(bits: u32, signed: bool) -> &'static str {
-    match (bits, signed) {
-        (8, true) => "i8",
-        (8, false) => "u8",
-        (16, true) => "i16",
-        (16, false) => "u16",
-        (32, true) => "i32",
-        (32, false) => "u32",
-        (64, true) => "i64",
-        (64, false) => "u64",
-        (128, true) => "i128",
-        (128, false) => "u128",
-        _ => panic!("Unsupported integer width: {}", bits),
+        _ => unreachable!("unsupported unsigned integer width: {}", bits),
     }
 }

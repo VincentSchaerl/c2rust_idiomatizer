@@ -21,7 +21,7 @@ bear --output "$test_dir/in/compile_commands.json" -- make -C "$test_dir/in"
   --thin-binaries \
   --output-dir "$test_dir/out/transpile" \
   "$test_dir/in/compile_commands.json"
-  cargo fmt --manifest-path "$test_dir/out/transpile/Cargo.toml"
+cargo fmt --manifest-path "$test_dir/out/transpile/Cargo.toml"
 cargo build --manifest-path "$test_dir/out/transpile/Cargo.toml"
 cargo run --manifest-path "$test_dir/out/transpile/Cargo.toml"
 
