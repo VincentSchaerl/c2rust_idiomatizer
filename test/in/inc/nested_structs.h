@@ -1,23 +1,23 @@
 #pragma once
 
-struct InnerStruct
+struct inner_struct_t
 {
     int x;
 };
 
-struct OuterStruct
+struct outer_struct_t
 {
     int x;
-    struct InnerStruct innerStruct;
+    struct inner_struct_t inner_struct;
 };
 
 typedef struct
 {
     int x;
-} InnerStructTypedef;
+} inner_struct_typedef_t;
 
 typedef struct
 {
     int x;
-    InnerStructTypedef innerStructTypedef;
-} OuterStructTypedef;
+    inner_struct_typedef_t inner_struct_typedef;
+} outer_struct_typedef_t;

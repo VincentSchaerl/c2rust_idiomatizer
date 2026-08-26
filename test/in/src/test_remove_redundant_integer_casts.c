@@ -1,144 +1,142 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "test_remove_redundant_integer_casts.h"
 #include "nested_structs.h"
 
 static void keep_DEFINE(int define);
-static void assign_to_variable(int a);
-static void compare_with_variable_value(int a);
-static void assign_to_memory_location(int* a_p);
-static void compare_with_memory_location_value(int* a_p);
+static void assign_to_variable(int variable);
+static void compare_with_variable_value(int variable);
+static void assign_to_memory_location(int* variable_ptr);
+static void compare_with_memory_location_value(int* variable_ptr);
 static void assign_to_array_element(int array[]);
 static void compare_with_array_element_value(int array[]);
-static void assign_to_struct_member(struct OuterStruct outerStruct, OuterStructTypedef outerStructTypedef);
-static void compare_with_struct_member_value(struct OuterStruct outerStruct, OuterStructTypedef outerStructTypedef);
+static void assign_to_struct_member(struct outer_struct_t outer_struct, outer_struct_typedef_t outer_struct_typedef);
+static void compare_with_struct_member_value(struct outer_struct_t outer_struct, outer_struct_typedef_t outer_struct_typedef);
 static void assign_to_member_of_struct_dereferenced_via_pointer
 (
-    struct OuterStruct* outerStruct_p,
-    OuterStructTypedef* outerStructTypedef_p
+    struct outer_struct_t* outer_struct_ptr,
+    outer_struct_typedef_t* outer_struct_typedef_ptr
 );
 static void compare_with_member_value_of_struct_dereferenced_via_pointer
 (
-    struct OuterStruct* outerStruct_p,
-    OuterStructTypedef* outerStructTypedef_p
+    struct outer_struct_t* outer_struct_ptr,
+    outer_struct_typedef_t* outer_struct_typedef_ptr
 );
 static void receive_integer(int a);
 static int return_integer();
 
 // Initialization of a variable
-static int a = 0;
+static int variable_global = 0;
 #define DEFINE 1
 
 // Initialization of an array
-static int array0[4] = {2, -3, 4, -5};
+static int array_global[4] = {2, -3, 4, -5};
 
 // Initialization of a struct
-static struct OuterStruct outerStruct0 = { 6, { -7 } };
-static OuterStructTypedef outerStructTypedef0 = { 8, { -9 } };
+static struct outer_struct_t outer_struct_global = { 6, { -7 } };
+static outer_struct_typedef_t outer_struct_typedef_global = { 8, { -9 } };
 
-static int* a_p = &a;
-static struct OuterStruct* outerStruct0_p = &outerStruct0;
-static OuterStructTypedef* outerStructTypedef0_p = &outerStructTypedef0;
+static int* variable_ptr_global = &variable_global;
+static struct outer_struct_t* outer_struct_ptr_global = &outer_struct_global;
+static outer_struct_typedef_t* outer_struct_typedef_ptr_global = &outer_struct_typedef_global;
 
 void test_remove_redundant_integer_casts()
 {
     keep_DEFINE(DEFINE);
 
     // Initialization of a variable
-    int b = 10;
-    static int c = -013;
-
-    int d = 0xC == c;
+    int variable = 10;
+    static int variable_static = -013;
+    int variable_2 = 0xC == variable;
 
     // Assignment to a variable
-    a = -13;
-    b = 14;
-    assign_to_variable(a);
+    variable_global = -13;
+    variable = 14;
+    assign_to_variable(variable);
 
     // Comparison with the value of a variable
-    if (a < -0xF) {volatile int keep = 0;}
-    if (b <= 020) {volatile int keep = 0;}
-    compare_with_variable_value(a);
+    if (variable_global < -0xF) {volatile int keep = 0;}
+    if (variable <= 020) {volatile int keep = 0;}
+    compare_with_variable_value(variable);
 
     // Assignment to a memory location pointed to by a pointer
-    int* b_p = &b;
-    *a_p = -17;
-    *b_p = 18;
-    assign_to_memory_location(a_p);
+    int* variable_ptr = &variable;
+    *variable_ptr_global = -17;
+    *variable_ptr = 18;
+    assign_to_memory_location(variable_ptr);
 
     // Comparison with the value at a memory location pointed to by a pointer
-    if (*a_p != -19) {volatile int keep = 0;}
-    if (20 == *b_p) {volatile int keep = 0;}
-    compare_with_memory_location_value(a_p);
+    if (*variable_ptr_global != -19) {volatile int keep = 0;}
+    if (20 == *variable_ptr) {volatile int keep = 0;}
+    compare_with_memory_location_value(variable_ptr);
 
     // Initialization of an array
-    int array1[4] = {-21, 22, -23, 24};
+    int array[4] = {-21, 22, -23, 24};
 
     // Assignment to an element of an array
-    a = 0;
-    array0[0] = -25;
-    array0[a] = 26;
-    array1[0] = -27;
-    array1[a] = 28;
-    assign_to_array_element(array0);
+    int i = 0;
+    array_global[0] = -25;
+    array_global[i] = 26;
+    array[0] = -27;
+    array[i] = 28;
+    assign_to_array_element(array);
 
     // Comparison with the value of an element of an array
-    if (-29 >= array0[0]) {volatile int keep = 0;}
-    if (30 > array0[a]) {volatile int keep = 0;}
-    if (array1[0] < -31) {volatile int keep = 0;}
-    if (array1[a] <= 32) {volatile int keep = 0;}
-    compare_with_array_element_value(array0);
+    if (-29 >= array_global[0]) {volatile int keep = 0;}
+    if (30 > array_global[i]) {volatile int keep = 0;}
+    if (array[0] < -31) {volatile int keep = 0;}
+    if (array[i] <= 32) {volatile int keep = 0;}
+    compare_with_array_element_value(array);
 
     // Initialization of a struct
-    struct OuterStruct outerStruct1 = { -33, { 34 } };
-    OuterStructTypedef outerStructTypedef1 = { -35, { 36 } };
+    struct outer_struct_t outer_struct = { -33, { 34 } };
+    outer_struct_typedef_t outer_struct_typedef = { -35, { 36 } };
 
     // Assignment to a member of a struct
-    outerStruct0.x = -37;
-    outerStruct0.innerStruct.x = 38;
-    outerStructTypedef0.x = -39;
-    outerStructTypedef0.innerStructTypedef.x = 40;
-    outerStruct1.x = -41;
-    outerStruct1.innerStruct.x = 42;
-    outerStructTypedef1.x = -43;
-    outerStructTypedef1.innerStructTypedef.x = 44;
-    assign_to_struct_member(outerStruct0, outerStructTypedef0);
+    outer_struct_global.x = -37;
+    outer_struct_global.inner_struct.x = 38;
+    outer_struct_typedef_global.x = -39;
+    outer_struct_typedef_global.inner_struct_typedef.x = 40;
+    outer_struct.x = -41;
+    outer_struct.inner_struct.x = 42;
+    outer_struct_typedef.x = -43;
+    outer_struct_typedef.inner_struct_typedef.x = 44;
+    assign_to_struct_member(outer_struct, outer_struct_typedef);
 
     // Comparison with the value of a member of a struct
-    if (outerStruct0.x != -45) {volatile int keep = 0;}
-    if (46 == outerStruct0.innerStruct.x) {volatile int x = 0;}
-    if (-47 >= outerStructTypedef0.x) {volatile int keep = 0;}
-    if (48 > outerStructTypedef0.innerStructTypedef.x) {volatile int x = 0;}
-    if (outerStruct1.x < -49) {volatile int keep = 0;}
-    if (outerStruct1.innerStruct.x <= 50) {volatile int x = 0;}
-    if (outerStructTypedef1.x != -51) {volatile int keep = 0;}
-    if (52 == outerStructTypedef1.innerStructTypedef.x) {volatile int x = 0;}
-    compare_with_struct_member_value(outerStruct0, outerStructTypedef0);
+    if (outer_struct_global.x != -45) {volatile int keep = 0;}
+    if (46 == outer_struct_global.inner_struct.x) {volatile int x = 0;}
+    if (-47 >= outer_struct_typedef_global.x) {volatile int keep = 0;}
+    if (48 > outer_struct_typedef_global.inner_struct_typedef.x) {volatile int x = 0;}
+    if (outer_struct.x < -49) {volatile int keep = 0;}
+    if (outer_struct.inner_struct.x <= 50) {volatile int x = 0;}
+    if (outer_struct_typedef.x != -51) {volatile int keep = 0;}
+    if (52 == outer_struct_typedef.inner_struct_typedef.x) {volatile int x = 0;}
+    compare_with_struct_member_value(outer_struct, outer_struct_typedef);
 
     // Assignment to a member of a struct dereferenced via a pointer
-    struct OuterStruct* outerStruct1_p = &outerStruct1;
-    OuterStructTypedef* outerStructTypedef1_p = &outerStructTypedef1;
-    outerStruct0_p->x = -53;
-    outerStruct0_p->innerStruct.x = 54;
-    outerStructTypedef0_p->x = -55;
-    outerStructTypedef0_p->innerStructTypedef.x = 56;
-    outerStruct1_p->x = -57;
-    outerStruct1_p->innerStruct.x = 58;
-    outerStructTypedef1_p->x = -59;
-    outerStructTypedef1_p->innerStructTypedef.x = 60;
-    assign_to_member_of_struct_dereferenced_via_pointer(&outerStruct0, &outerStructTypedef0);
+    struct outer_struct_t* outer_struct_ptr = &outer_struct;
+    outer_struct_typedef_t* outer_struct_typedef_ptr = &outer_struct_typedef;
+    outer_struct_ptr_global->x = -53;
+    outer_struct_ptr_global->inner_struct.x = 54;
+    outer_struct_typedef_ptr_global->x = -55;
+    outer_struct_typedef_ptr_global->inner_struct_typedef.x = 56;
+    outer_struct_ptr->x = -57;
+    outer_struct_ptr->inner_struct.x = 58;
+    outer_struct_typedef_ptr->x = -59;
+    outer_struct_typedef_ptr->inner_struct_typedef.x = 60;
+    assign_to_member_of_struct_dereferenced_via_pointer(outer_struct_ptr, outer_struct_typedef_ptr);
 
     // Comparison with the value of a member of a struct dereferenced via a pointer
-    if (-61 >= outerStruct0_p->x) {volatile int keep = 0;}
-    if (62 > outerStruct0_p->innerStruct.x) {volatile int x = 0;}
-    if ( outerStructTypedef0_p->x < -63) {volatile int keep = 0;}
-    if (outerStructTypedef0_p->innerStructTypedef.x <= 64) {volatile int x = 0;}
-    if (outerStruct1_p->x != -65) {volatile int keep = 0;}
-    if (66 == outerStruct1_p->innerStruct.x) {volatile int x = 0;}
-    if (-67 >= outerStructTypedef1_p->x) {volatile int keep = 0;}
-    if (68 > outerStructTypedef1_p->innerStructTypedef.x) {volatile int x = 0;}
-    compare_with_member_value_of_struct_dereferenced_via_pointer(&outerStruct0, &outerStructTypedef0);
+    if (-61 >= outer_struct_ptr_global->x) {volatile int keep = 0;}
+    if (62 > outer_struct_ptr_global->inner_struct.x) {volatile int x = 0;}
+    if ( outer_struct_typedef_ptr_global->x < -63) {volatile int keep = 0;}
+    if (outer_struct_typedef_ptr_global->inner_struct_typedef.x <= 64) {volatile int x = 0;}
+    if (outer_struct_ptr->x != -65) {volatile int keep = 0;}
+    if (66 == outer_struct_ptr->inner_struct.x) {volatile int x = 0;}
+    if (-67 >= outer_struct_typedef_ptr->x) {volatile int keep = 0;}
+    if (68 > outer_struct_typedef_ptr->inner_struct_typedef.x) {volatile int x = 0;}
+    compare_with_member_value_of_struct_dereferenced_via_pointer(outer_struct_ptr, outer_struct_typedef_ptr);
 
     // Passing to a function
     receive_integer(-69);
@@ -151,78 +149,78 @@ void test_remove_redundant_integer_casts()
 
 static void keep_DEFINE(int define) {}
 
-static void assign_to_variable(int a)
+static void assign_to_variable(int variable)
 {
-    a = 70;
+    variable = 70;
 }
 
-static void compare_with_variable_value(int a)
+static void compare_with_variable_value(int variable)
 {
-    if (a < -71) {volatile int keep = 0;}
+    if (variable < -71) {volatile int keep = 0;}
 }
 
-static void assign_to_memory_location(int* a_p)
+static void assign_to_memory_location(int* variable_ptr)
 {
-    *a_p = 72;
+    *variable_ptr = 72;
 }
 
-static void compare_with_memory_location_value(int* a_p)
+static void compare_with_memory_location_value(int* variable_ptr)
 {
-    if (*a_p <= -73) {volatile int x = 0;}
+    if (*variable_ptr <= -73) {volatile int x = 0;}
 }
 
 static void assign_to_array_element(int array[])
 {
-    int a = 0;
+    int i = 0;
     array[0] = 74;
-    array[a] = -75;
+    array[i] = -75;
 }
 
 static void compare_with_array_element_value(int array[])
 {
-    int a = 0;
+    int i = 0;
     if (array[0] != 76) {volatile int keep = 0;}
-    if (-77 == array[a]) {volatile int x = 0;}
+    if (-77 == array[i]) {volatile int x = 0;}
 }
 
-static void assign_to_struct_member(struct OuterStruct outerStruct, OuterStructTypedef outerStructTypedef)
+static void assign_to_struct_member(struct outer_struct_t outer_struct, outer_struct_typedef_t outer_struct_typedef)
 {
-    outerStruct.x = 78;
-    outerStruct.innerStruct.x = -79;
-    outerStructTypedef.x = 80;
-    outerStructTypedef.innerStructTypedef.x = -81;
+    outer_struct.x = 78;
+    outer_struct.inner_struct.x = -79;
+    outer_struct_typedef.x = 80;
+    outer_struct_typedef.inner_struct_typedef.x = -81;
 }
 
-static void compare_with_struct_member_value(struct OuterStruct outerStruct, OuterStructTypedef outerStructTypedef)
+static void compare_with_struct_member_value(struct outer_struct_t outer_struct, outer_struct_typedef_t outer_struct_typedef)
 {
-    if (82 >= outerStruct.x) {volatile int keep = 0;}
-    if (-83 > outerStruct.innerStruct.x) {volatile int x = 0;}
-    if (outerStructTypedef.x < 84) {volatile int keep = 0;}
-    if (outerStructTypedef.innerStructTypedef.x <= -85) {volatile int x = 0;}
+    if (82 >= outer_struct.x) {volatile int keep = 0;}
+    if (-83 > outer_struct.inner_struct.x) {volatile int x = 0;}
+    if (outer_struct_typedef.x < 84) {volatile int keep = 0;}
+    if (outer_struct_typedef.inner_struct_typedef.x <= -85) {volatile int x = 0;}
 }
 
 static void assign_to_member_of_struct_dereferenced_via_pointer
 (
-    struct OuterStruct* outerStruct_p,
-    OuterStructTypedef* outerStructTypedef_p
+    struct outer_struct_t* outer_struct_ptr,
+    outer_struct_typedef_t* outer_struct_typedef_ptr
 )
 {
-    outerStruct_p->x = 86;
-    outerStruct_p->innerStruct.x = -87;
-    outerStructTypedef_p->x = 88;
-    outerStructTypedef_p->innerStructTypedef.x = -89;
+    outer_struct_ptr->x = 86;
+    outer_struct_ptr->inner_struct.x = -87;
+    outer_struct_typedef_ptr->x = 88;
+    outer_struct_typedef_ptr->inner_struct_typedef.x = -89;
 }
 
 static void compare_with_member_value_of_struct_dereferenced_via_pointer
 (
-    struct OuterStruct* outerStruct_p,
-    OuterStructTypedef* outerStructTypedef_p
+    struct outer_struct_t* outer_struct_ptr,
+    outer_struct_typedef_t* outer_struct_typedef_ptr
 )
 {
-    if (outerStruct_p->x != 90) {volatile int keep = 0;}
-    if (-91 == outerStruct_p->innerStruct.x) {volatile int x = 0;}
-    if (92 >= outerStructTypedef_p->x) {volatile int keep = 0;}
-    if (-93 > outerStructTypedef_p->innerStructTypedef.x) {volatile int x = 0;}
+    if (outer_struct_ptr->x != 90) {volatile int keep = 0;}
+    if (-91 == outer_struct_ptr->inner_struct.x) {volatile int x = 0;}
+    if (92 >= outer_struct_typedef_ptr->x) {volatile int keep = 0;}
+    if (-93 > outer_struct_typedef_ptr->inner_struct_typedef.x) {volatile int x = 0;}
 }
 
 static void receive_integer(int a) {}
