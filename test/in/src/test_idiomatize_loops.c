@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "nested_structs.h"
+#include "nested_struct.h"
 
 static void receive_integers_for_l
 (
@@ -11,9 +11,7 @@ static void receive_integers_for_l
     const int* _int_ptr_const,
     int array[],
     struct outer_struct_t outer_struct,
-    outer_struct_typedef_t outer_struct_typedef,
-    struct outer_struct_t* outer_struct_ptr,
-    outer_struct_typedef_t* outer_struct_typedef_ptr
+    struct outer_struct_t* outer_struct_ptr
 );
 
 // T-values
@@ -24,9 +22,7 @@ static int* _int_ptr_global = &_int_global;
 static const int* _int_ptr_global_const = &_int_global_const;
 static int _int_array_global[10] = {0};
 static struct outer_struct_t outer_struct_global = { 0, { 0 } };
-static outer_struct_typedef_t outer_struct_typedef_global = { 0, { 0 } };
 static struct outer_struct_t* outer_struct_ptr_global = &outer_struct_global;
-static outer_struct_typedef_t* outer_struct_typedef_ptr_global = &outer_struct_typedef_global;
 
 void test_idiomatize_loops()
 {
@@ -39,9 +35,7 @@ void test_idiomatize_loops()
     const int* _int_ptr_const = &_int;
     int _int_array[10] = {0};
     struct outer_struct_t outer_struct = { 0, { 0 } };
-    outer_struct_typedef_t outer_struct_typedef = { 0, { 0 } };
     struct outer_struct_t* outer_struct_ptr = &outer_struct;
-    outer_struct_typedef_t* outer_struct_typedef_ptr = &outer_struct_typedef;
     
     // BASE CASE
 
@@ -96,21 +90,13 @@ void test_idiomatize_loops()
     for (int i_0 = _int_array[a]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_global.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_global.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_global.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_global.inner_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef.inner_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr_global->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr_global->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_ptr_global->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_ptr_global->inner_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_ptr->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_ptr->inner_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    receive_integers_for_l(0, 0, _int_ptr, _int_ptr_const, _int_array, outer_struct, outer_struct_typedef, outer_struct_ptr, outer_struct_typedef_ptr);
+    receive_integers_for_l(0, 0, _int_ptr, _int_ptr_const, _int_array, outer_struct, outer_struct_ptr);
 
     // END
 
@@ -127,9 +113,7 @@ static void receive_integers_for_l
     const int* _int_ptr_const,
     int array[],
     struct outer_struct_t outer_struct,
-    outer_struct_typedef_t outer_struct_typedef,
-    struct outer_struct_t* outer_struct_ptr,
-    outer_struct_typedef_t* outer_struct_typedef_ptr
+    struct outer_struct_t* outer_struct_ptr
 )
 {
     for (int i_0 = _int; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
@@ -141,12 +125,8 @@ static void receive_integers_for_l
     for (int i_0 = array[a]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef.inner_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_ptr->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = outer_struct_typedef_ptr->inner_struct_typedef.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
 }
 
 
