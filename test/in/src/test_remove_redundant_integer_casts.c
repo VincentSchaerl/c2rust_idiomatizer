@@ -81,7 +81,7 @@ void test_remove_redundant_integer_casts()
     // Assignment to a memory location pointed to by a pointer
     int* pointer = &variable;
     const int* pointer_const_0 = &variable_const;
-    int* const pointer_const_1 = &variable_const;
+    int* const pointer_const_1 = &variable;
     static int* pointer_static = &variable_static;
     *pointer_global = -27;
     *pointer_global_static = 28;
@@ -164,7 +164,7 @@ void test_remove_redundant_integer_casts()
     // Assignment to a member of a struct dereferenced via a pointer
     struct outer_struct_t* outer_struct_ptr = &outer_struct;
     const struct outer_struct_t* outer_struct_ptr_const_0 = &outer_struct_const;
-    struct outer_struct_t* const outer_struct_ptr_const_1 = &outer_struct_const;
+    struct outer_struct_t* const outer_struct_ptr_const_1 = &outer_struct;
     static struct outer_struct_t* outer_struct_ptr_static = &outer_struct_static;
     outer_struct_ptr_global->x = -93;
     outer_struct_ptr_global->inner_struct.x = 94;

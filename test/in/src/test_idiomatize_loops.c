@@ -3,39 +3,88 @@
 
 #include "nested_struct.h"
 
-static void receive_integers_for_l
+static void receive_t_values_for_l
 (
-    int _int,
-    const int _int_const,
-    int* _int_ptr,
-    const int* _int_ptr_const,
-    int array[],
+    int variable,
+    const int variable_const,
+    int* pointer,
+    const int* pointer_const_0,
+    int* const pointer_const_1,
     struct outer_struct_t outer_struct,
-    struct outer_struct_t* outer_struct_ptr
+    const struct outer_struct_t outer_struct_const,
+    struct outer_struct_t* outer_struct_ptr,
+    const struct outer_struct_t* outer_struct_ptr_const_0,
+    struct outer_struct_t* const outer_struct_ptr_const_1
 );
 
 // T-values
 
-static int _int_global = 0;
-static const int _int_global_const = 0;
-static int* _int_ptr_global = &_int_global;
-static const int* _int_ptr_global_const = &_int_global_const;
-static int _int_array_global[10] = {0};
-static struct outer_struct_t outer_struct_global = { 0, { 0 } };
-static struct outer_struct_t* outer_struct_ptr_global = &outer_struct_global;
+#define VARIABLE_GLOBAL_DEFINE 0
+extern int variable_global;
+static int variable_global_static = 0;
+
+extern int* pointer_global;
+extern const int* pointer_global_const_0;
+static int* pointer_global_static = &variable_global_static;
+
+extern int array_global[10];
+static int array_global_static[10] = {0};
+
+extern struct outer_struct_t outer_struct_global;
+static struct outer_struct_t outer_struct_global_static = { 0, { 0 } };
+
+extern struct outer_struct_t* outer_struct_ptr_global;
+extern const struct outer_struct_t* outer_struct_ptr_global_const_0;
+static struct outer_struct_t* outer_struct_ptr_global_static = &outer_struct_global;
 
 void test_idiomatize_loops()
 {
     // T-values
 
-    int _int = 0;
-    const int _int_const = 0;
-    static int _int_static = 0;
-    int* _int_ptr = &_int;
-    const int* _int_ptr_const = &_int;
-    int _int_array[10] = {0};
+    int variable = 0;
+    const int variable_const = 0;
+    static int variable_static = 0;
+
+    int* pointer = &variable;
+    const int* pointer_const_0 = &variable_const;
+    int* const pointer_const_1 = &variable;
+    static int* pointer_static = &variable_static;
+
+    int array[10] = {0};
+    const int array_const[10] = {0};
+    static int array_static[10] = {0};
+
     struct outer_struct_t outer_struct = { 0, { 0 } };
+    const struct outer_struct_t outer_struct_const = { 0, { 0 } };
+    static struct outer_struct_t outer_struct_static = { 0, { 0 } };
+
     struct outer_struct_t* outer_struct_ptr = &outer_struct;
+    const struct outer_struct_t* outer_struct_ptr_const_0 = &outer_struct_const;
+    struct outer_struct_t* const outer_struct_ptr_const_1 = &outer_struct;
+    static struct outer_struct_t* outer_struct_ptr_static = &outer_struct_static;
+
+    // U-values
+
+    signed char _signed_char = 0;
+    unsigned char _unsigned_char = 0;
+    short _short = 0;
+    unsigned short _unsigned_short = 0;
+    unsigned int _unsigned_int = 0;
+    long _long = 0;
+    unsigned long _unsigned_long = 0;
+    long long _long_long = 0;
+    unsigned long long _unsigned_long_long = 0;
+    int8_t _int8_t = 0;
+    uint8_t _uint8_t = 0;
+    int16_t _int16_t = 0;
+    uint16_t _uint16_t = 0;
+    int32_t _int32_t = 0;
+    uint32_t _uint32_t = 0;
+    int64_t _int64_t = 0;
+    uint64_t _uint64_t = 0;
+    intptr_t _intptr_t = 0;
+    uintptr_t _uintptr_t = 0;
+    size_t _size_t = 0;
     
     // BASE CASE
 
@@ -45,26 +94,16 @@ void test_idiomatize_loops()
 
     // T
 
-    for (int8_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int16_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int32_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int64_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (uint8_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (uint16_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (uint32_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (uint64_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (signed char i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (unsigned char i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (short i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (unsigned short i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (long i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (unsigned long i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (long long i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (unsigned long long i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (intptr_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (uintptr_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int32_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (uint32_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int64_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (uint64_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (size_t i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
 
     // L
@@ -74,59 +113,182 @@ void test_idiomatize_loops()
     for (int i_0 = 6; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = -011; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = 0xC; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_global; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_global_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_static; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = *_int_ptr_global; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = *_int_ptr_global_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = *_int_ptr; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = *_int_ptr_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    int a = 0;
-    for (int i_0 = _int_array_global[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_array_global[a]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_array[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_array[a]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    for (int i_0 = VARIABLE_GLOBAL_DEFINE; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = variable_global; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = variable_global_static; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = variable; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = variable_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = variable_static; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    for (int i_0 = *pointer_global; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer_global_const_0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer_global_static; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer_const_0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer_const_1; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer_static; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    const int i = 0;
+    for (int i_0 = array_global[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array_global[i]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array_global_static[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array_global_static[i]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array[i]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array_const[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array_const[i]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array_static[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = array_static[i]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+
     for (int i_0 = outer_struct_global.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_global.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_global_static.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_global_static.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_const.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_const.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_static.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_static.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+
     for (int i_0 = outer_struct_ptr_global->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr_global->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_global_const_0->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_global_const_0->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_global_static->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_global_static->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    receive_integers_for_l(0, 0, _int_ptr, _int_ptr_const, _int_array, outer_struct, outer_struct_ptr);
+    for (int i_0 = outer_struct_ptr_const_0->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_const_0->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_const_1->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_const_1->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_static->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_static->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    receive_t_values_for_l
+    (
+        variable,
+        variable_const,
+        pointer,
+        pointer_const_0,
+        pointer_const_1,
+        outer_struct,
+        outer_struct_const,
+        outer_struct_ptr,
+        outer_struct_ptr_const_0,
+        outer_struct_ptr_const_1
+    );
+
+    for (int i_0 = _signed_char; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _unsigned_char; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _short; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _unsigned_short; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _long_long; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _unsigned_long_long; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _int8_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _uint8_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _int16_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _uint16_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _int32_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _uint32_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _int64_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _uint64_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _intptr_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _uintptr_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = _size_t; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    // relational_operator
+
+    for (int i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 <= 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 > 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 >= 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; 10 < i_0; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; 10 <= i_0; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; 10 > i_0; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; 10 >= i_0; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    // N
+
+    for (int i_0 = 0; i_0 < 0; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < -3; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < 6; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < -011; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < 0xC; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    for (int i_0 = 0; i_0 < VARIABLE_GLOBAL_DEFINE; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < variable; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < variable_const; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < variable_static; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < array; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < array_const; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < array_static; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < outer_struct.x; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < outer_struct.inner_struct.x; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < outer_struct_const.x; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < outer_struct_const.inner_struct.x; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < outer_struct_static.x; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < outer_struct_static.inner_struct.x; i_0++) {volatile int keep = 1; if (keep) break;}
+
+    // receive_stable_t_values_for_n();
+
+    for (int i_0 = 0; i_0 < _signed_char; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _unsigned_char; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _short; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _unsigned_short; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _unsigned_int; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _long; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _unsigned_long; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _long_long; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _unsigned_long_long; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _int8_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _uint8_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _int16_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _uint16_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _int32_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _uint32_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _int64_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _uint64_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _intptr_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _uintptr_t; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = 0; i_0 < _size_t; i_0++) {volatile int keep = 1; if (keep) break;}
 
     // END
 
     printf("End of test_idiomatize_loops().\n");
 }
 
-
-
-static void receive_integers_for_l
+static void receive_t_values_for_l
 (
-    int _int,
-    const int _int_const,
-    int* _int_ptr,
-    const int* _int_ptr_const,
-    int array[],
+    int variable,
+    const int variable_const,
+    int* pointer,
+    const int* pointer_const_0,
+    int* const pointer_const_1,
     struct outer_struct_t outer_struct,
-    struct outer_struct_t* outer_struct_ptr
+    const struct outer_struct_t outer_struct_const,
+    struct outer_struct_t* outer_struct_ptr,
+    const struct outer_struct_t* outer_struct_ptr_const_0,
+    struct outer_struct_t* const outer_struct_ptr_const_1
 )
 {
-    for (int i_0 = _int; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = _int_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = *_int_ptr; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = *_int_ptr_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    for (int i_0 = array[0]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
-    int a = 0;
-    for (int i_0 = array[a]; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = variable; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = variable_const; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer_const_0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = *pointer_const_1; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_const.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_const.inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
     for (int i_0 = outer_struct_ptr->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_const_0->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_const_0->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_const_1->x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
+    for (int i_0 = outer_struct_ptr_const_1->inner_struct.x; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
 }
 
 
