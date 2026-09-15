@@ -3,7 +3,7 @@
 
 #include "nested_struct.h"
 
-static void keep_DEFINE(int define);
+static void keep_variable_global_const(int variable_global_const);
 static void assign_to_variable(int variable);
 static void compare_with_variable_value(int variable, const int variable_const);
 static void assign_to_memory_location(int* pointer, int* const pointer_const_1);
@@ -13,50 +13,50 @@ static void compare_with_memory_location_value
     const int* pointer_const_0,
     int* const pointer_const_1
 );
-static void assign_to_struct_member(struct outer_struct_t outer_struct);
+static void assign_to_struct_member(outer_struct_t outer_struct);
 static void compare_with_struct_member_value
 (
-    struct outer_struct_t outer_struct,
-    const struct outer_struct_t outer_struct_const
+    outer_struct_t outer_struct,
+    const outer_struct_t outer_struct_const
 );
 static void assign_to_member_of_struct_dereferenced_via_pointer
 (
-    struct outer_struct_t* outer_struct_ptr,
-    struct outer_struct_t* const outer_struct_ptr_const_1
+    outer_struct_t* outer_struct_ptr,
+    outer_struct_t* const outer_struct_ptr_const_1
 );
 static void compare_with_member_value_of_struct_dereferenced_via_pointer
 (
-    struct outer_struct_t* outer_struct_ptr,
-    const struct outer_struct_t* outer_struct_ptr_const_0,
-    struct outer_struct_t* const outer_struct_ptr_const_1
+    outer_struct_t* outer_struct_ptr,
+    const outer_struct_t* outer_struct_ptr_const_0,
+    outer_struct_t* const outer_struct_ptr_const_1
 );
 static void receive_integer(int a);
 static int return_integer();
 
 // Initialization of a variable
 int variable_global = 0;
-static int variable_global_static = -1;
-#define DEFINE 2
+#define VARIABLE_GLOBAL_CONST (-1)
+static int variable_global_static = 2;
 
 // Initialization of an array
 int array_global[4] = {-3, 4, -5, 6};
 static int array_global_static[4] = {-7, 8, -9, 10};
 
 // Initialization of a struct
-struct outer_struct_t outer_struct_global = { -11, { 12 } };
-static struct outer_struct_t outer_struct_global_static = { -13, { 14 } };
+outer_struct_t outer_struct_global = { -11, { 12 } };
+static outer_struct_t outer_struct_global_static = { -13, { 14 } };
 
 int* pointer_global = &variable_global;
 const int* pointer_global_const_0 = &variable_global;
 static int* pointer_global_static = &variable_global_static;
 
-struct outer_struct_t* outer_struct_ptr_global = &outer_struct_global;
-const struct outer_struct_t* outer_struct_ptr_global_const_0 = &outer_struct_global;
-static struct outer_struct_t* outer_struct_ptr_global_static = &outer_struct_global_static;
+outer_struct_t* outer_struct_ptr_global = &outer_struct_global;
+const outer_struct_t* outer_struct_ptr_global_const_0 = &outer_struct_global;
+static outer_struct_t* outer_struct_ptr_global_static = &outer_struct_global_static;
 
 void test_remove_redundant_integer_casts()
 {
-    keep_DEFINE(DEFINE);
+    keep_variable_global_const(VARIABLE_GLOBAL_CONST);
 
     // Initialization of a variable
     int variable = -0xF;
@@ -129,9 +129,9 @@ void test_remove_redundant_integer_casts()
     if (array_static[i] == 68) {volatile int keep = 0;}
 
     // Initialization of a struct
-    struct outer_struct_t outer_struct = { -69, { 70 } };
-    const struct outer_struct_t outer_struct_const = { -71, { 72 } };
-    static struct outer_struct_t outer_struct_static = { -73, { 74 } };
+    outer_struct_t outer_struct = { -69, { 70 } };
+    const outer_struct_t outer_struct_const = { -71, { 72 } };
+    static outer_struct_t outer_struct_static = { -73, { 74 } };
 
     // Assignment to a member of a struct
     outer_struct_global.x = -75;
@@ -162,10 +162,10 @@ void test_remove_redundant_integer_casts()
     );
 
     // Assignment to a member of a struct dereferenced via a pointer
-    struct outer_struct_t* outer_struct_ptr = &outer_struct;
-    const struct outer_struct_t* outer_struct_ptr_const_0 = &outer_struct_const;
-    struct outer_struct_t* const outer_struct_ptr_const_1 = &outer_struct;
-    static struct outer_struct_t* outer_struct_ptr_static = &outer_struct_static;
+    outer_struct_t* outer_struct_ptr = &outer_struct;
+    const outer_struct_t* outer_struct_ptr_const_0 = &outer_struct_const;
+    outer_struct_t* const outer_struct_ptr_const_1 = &outer_struct;
+    static outer_struct_t* outer_struct_ptr_static = &outer_struct_static;
     outer_struct_ptr_global->x = -93;
     outer_struct_ptr_global->inner_struct.x = 94;
     outer_struct_ptr_global_static->x = -95;
@@ -214,7 +214,7 @@ void test_remove_redundant_integer_casts()
     printf("End of test_remove_redundant_integer_casts().\n");
 }
 
-static void keep_DEFINE(int define) {}
+static void keep_variable_global_const(int variable_global_const) {}
 
 static void assign_to_variable(int variable)
 {
@@ -245,7 +245,7 @@ static void compare_with_memory_location_value
     if (*pointer_const_1 == -125) {volatile int x = 0;}
 }
 
-static void assign_to_struct_member(struct outer_struct_t outer_struct)
+static void assign_to_struct_member(outer_struct_t outer_struct)
 {
     outer_struct.x = 126;
     outer_struct.inner_struct.x = -127;
@@ -253,8 +253,8 @@ static void assign_to_struct_member(struct outer_struct_t outer_struct)
 
 static void compare_with_struct_member_value
 (
-    struct outer_struct_t outer_struct,
-    const struct outer_struct_t outer_struct_const
+    outer_struct_t outer_struct,
+    const outer_struct_t outer_struct_const
 )
 {
     if (outer_struct.x >= 128) {volatile int keep = 0;}
@@ -265,8 +265,8 @@ static void compare_with_struct_member_value
 
 static void assign_to_member_of_struct_dereferenced_via_pointer
 (
-    struct outer_struct_t* outer_struct_ptr,
-    struct outer_struct_t* const outer_struct_ptr_const_1
+    outer_struct_t* outer_struct_ptr,
+    outer_struct_t* const outer_struct_ptr_const_1
 )
 {
     outer_struct_ptr->x = 132;
@@ -277,9 +277,9 @@ static void assign_to_member_of_struct_dereferenced_via_pointer
 
 static void compare_with_member_value_of_struct_dereferenced_via_pointer
 (
-    struct outer_struct_t* outer_struct_ptr,
-    const struct outer_struct_t* outer_struct_ptr_const_0,
-    struct outer_struct_t* const outer_struct_ptr_const_1
+    outer_struct_t* outer_struct_ptr,
+    const outer_struct_t* outer_struct_ptr_const_0,
+    outer_struct_t* const outer_struct_ptr_const_1
 )
 {
     if (136 != outer_struct_ptr->x) {volatile int keep = 0;}

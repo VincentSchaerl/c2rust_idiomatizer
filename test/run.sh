@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -e
 set -x
+ulimit -s 65536
 
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 project_root="$(cd "$test_dir/.." && pwd)"
