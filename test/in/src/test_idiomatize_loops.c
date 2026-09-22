@@ -19,10 +19,10 @@ static void receive_t_values_for_l
 
 static void receive_stable_t_values_for_n
 (
-    int variable,
-    const int variable_const,
-    outer_struct_t outer_struct,
-    const outer_struct_t outer_struct_const
+    int stable_variable,
+    const int stable_variable_const,
+    outer_struct_t stable_outer_struct,
+    const outer_struct_t stable_outer_struct_const
 );
 
 // T-values
@@ -112,6 +112,9 @@ void test_idiomatize_loops()
 
     for (int i_0 = 0; i_0 < 10; i_0++) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_0 = 0; f_0 < 10; f_0++) {f_0++; volatile int keep = 1; if (keep) break;}
+    for (int f_1 = 0; f_1 < 10; f_1++) {int* f_0_ptr = &f_1; volatile int keep = 1; if (keep) break;}
+
     // T
 
     for (int i_1 = 0; i_1 < 10; i_1++) {volatile int keep = 1; if (keep) break;}
@@ -125,6 +128,8 @@ void test_idiomatize_loops()
     for (int64_t i_9 = 0; i_9 < 10; i_9++) {volatile int keep = 1; if (keep) break;}
     for (uint64_t i_10 = 0; i_10 < 10; i_10++) {volatile int keep = 1; if (keep) break;}
     for (size_t i_11 = 0; i_11 < 10; i_11++) {volatile int keep = 1; if (keep) break;}
+
+    for (char f_2 = 0; f_2 < 10; f_2++) {volatile int keep = 1; if (keep) break;}
 
     // L
 
@@ -229,6 +234,8 @@ void test_idiomatize_loops()
     for (int i_86 = 0; 10 > i_86; i_86++) {volatile int keep = 1; if (keep) break;}
     for (int i_87 = 0; 10 >= i_87; i_87++) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_3 = 0; f_3 != 10; f_3++) {volatile int keep = 1; if (keep) break;}
+
     // N
 
     for (int i_88 = 0; i_88 < 0; i_88++) {volatile int keep = 1; if (keep) break;}
@@ -269,6 +276,11 @@ void test_idiomatize_loops()
     for (int i_111 = 0; i_111 < _int16_t; i_111++) {volatile int keep = 1; if (keep) break;}
     for (int i_112 = 0; i_112 < _uint16_t; i_112++) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_4 = 0; f_4 < variable; f_4++) {volatile int keep = 1; if (keep) break;}
+    for (int f_5 = 0; f_5 < stable_array[i]; f_5++) {volatile int keep = 1; if (keep) break;}
+    for (int f_6 = 0; f_6 < outer_struct.x; f_6++) {volatile int keep = 1; if (keep) break;}
+
+
     // decrementing_or_incrementing
 
     for (int i_113 = 0; i_113 < 10; i_113++) {volatile int keep = 1; if (keep) break;}
@@ -276,95 +288,133 @@ void test_idiomatize_loops()
     for (int i_115 = 0; 10 > i_115; i_115++) {volatile int keep = 1; if (keep) break;}
     for (int i_116 = 0; 10 >= i_116; i_116++) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_7 = 0; 10 <= f_7; f_7++) {volatile int keep = 1; if (keep) break;}
+
     for (int i_117 = 0; i_117 > 10; i_117--) {volatile int keep = 1; if (keep) break;}
     for (int i_118 = 0; i_118 >= 10; i_118--) {volatile int keep = 1; if (keep) break;}
     for (int i_119 = 0; 10 < i_119 ; i_119--) {volatile int keep = 1; if (keep) break;}
     for (int i_120 = 0; 10 <= i_120; i_120--) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_8 = 0; 10 >= f_8; f_8--) {volatile int keep = 1; if (keep) break;}
 
     for (int i_121 = 0; i_121 < 10; i_121 += 1) {volatile int keep = 1; if (keep) break;}
     for (int i_122 = 0; i_122 <= 10; i_122 += 1) {volatile int keep = 1; if (keep) break;}
     for (int i_123 = 0; 10 > i_123; i_123 += 1) {volatile int keep = 1; if (keep) break;}
     for (int i_124 = 0; 10 >= i_124; i_124 += 1) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_9 = 0; 10 < f_9; f_9 += 1) {volatile int keep = 1; if (keep) break;}
+
     for (int i_125 = 0; i_125 > 10; i_125 -= 1) {volatile int keep = 1; if (keep) break;}
     for (int i_126 = 0; i_126 >= 10; i_126 -= 1) {volatile int keep = 1; if (keep) break;}
     for (int i_127 = 0; 10 < i_127; i_127 -= 1) {volatile int keep = 1; if (keep) break;}
     for (int i_128 = 0; 10 <= i_128; i_128 -= 1) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_10 = 0; 10 > f_10; f_10 -= 1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_129 = 0; i_129 > 10; i_129 += -1) {volatile int keep = 1; if (keep) break;}
     for (int i_130 = 0; i_130 >= 10; i_130 += -1) {volatile int keep = 1; if (keep) break;}
     for (int i_131 = 0; 10 < i_131; i_131 += -1) {volatile int keep = 1; if (keep) break;}
     for (int i_132 = 0; 10 <= i_132; i_132 += -1) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_11 = 0; 10 >= f_11; f_11 += -1) {volatile int keep = 1; if (keep) break;}
+
     for (int i_133 = 0; i_133 < 10; i_133 -= -1) {volatile int keep = 1; if (keep) break;}
     for (int i_134 = 0; i_134 <= 10; i_134 -= -1) {volatile int keep = 1; if (keep) break;}
     for (int i_135 = 0; 10 > i_135; i_135 -= -1) {volatile int keep = 1; if (keep) break;}
     for (int i_136 = 0; 10 >= i_136; i_136 -= -1) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_12 = 0; 10 <= f_12; f_12 -= -1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_137 = 0; i_137 < 10; i_137 = i_137 + 1) {volatile int keep = 1; if (keep) break;}
     for (int i_138 = 0; i_138 <= 10; i_138 = i_138 + 1) {volatile int keep = 1; if (keep) break;}
     for (int i_139 = 0; 10 > i_139; i_139 = i_139 + 1) {volatile int keep = 1; if (keep) break;}
     for (int i_140 = 0; 10 >= i_140; i_140 = i_140 + 1) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_13 = 0; 10 < f_13; f_13 = f_13 + 1) {volatile int keep = 1; if (keep) break;}
+
     for (int i_141 = 0; i_141 > 10; i_141 = i_141 - 1) {volatile int keep = 1; if (keep) break;}
     for (int i_142 = 0; i_142 >= 10; i_142 = i_142 - 1) {volatile int keep = 1; if (keep) break;}
     for (int i_143 = 0; 10 < i_143; i_143 = i_143 - 1) {volatile int keep = 1; if (keep) break;}
     for (int i_144 = 0; 10 <= i_144; i_144 = i_144 - 1) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_14 = 0; 10 > f_14; f_14 = f_14 - 1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_145 = 0; i_145 > 10; i_145 = i_145 + -1) {volatile int keep = 1; if (keep) break;}
     for (int i_146 = 0; i_146 >= 10; i_146 = i_146 + -1) {volatile int keep = 1; if (keep) break;}
     for (int i_147 = 0; 10 < i_147; i_147 = i_147 + -1) {volatile int keep = 1; if (keep) break;}
     for (int i_148 = 0; 10 <= i_148; i_148 = i_148 + -1) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_15 = 0; 10 >= f_15; f_15 = f_15 + -1) {volatile int keep = 1; if (keep) break;}
+
     for (int i_149 = 0; i_149 < 10; i_149 = i_149 - -1) {volatile int keep = 1; if (keep) break;}
     for (int i_150 = 0; i_150 <= 10; i_150 = i_150 - -1) {volatile int keep = 1; if (keep) break;}
     for (int i_151 = 0; 10 > i_151; i_151 = i_151 - -1) {volatile int keep = 1; if (keep) break;}
     for (int i_152 = 0; 10 >= i_152; i_152 = i_152 - -1) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_16 = 0; 10 <= f_16; f_16 = f_16 - -1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_153 = 0; i_153 < 10; i_153 = 1 + i_153) {volatile int keep = 1; if (keep) break;}
     for (int i_154 = 0; i_154 <= 10; i_154 = 1 + i_154) {volatile int keep = 1; if (keep) break;}
     for (int i_155 = 0; 10 > i_155; i_155 = 1 + i_155) {volatile int keep = 1; if (keep) break;}
     for (int i_156 = 0; 10 >= i_156; i_156 = 1 + i_156) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_17 = 0; 10 < f_17; f_17 = 1 + f_17) {volatile int keep = 1; if (keep) break;}
+
     for (int i_157 = 0; i_157 > 10; i_157 = -1 + i_157) {volatile int keep = 1; if (keep) break;}
     for (int i_158 = 0; i_158 >= 10; i_158 = -1 + i_158) {volatile int keep = 1; if (keep) break;}
     for (int i_159 = 0; 10 < i_159; i_159 = -1 + i_159) {volatile int keep = 1; if (keep) break;}
     for (int i_160 = 0; 10 <= i_160; i_160 = -1 + i_160) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_18 = 0; 10 > f_18; f_18 = -1 + f_18) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int i_161 = 0; i_161 < 10; i_161++) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_162 = 0; i_162 <= 10; i_162++) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_163 = 0; 10 > i_163; i_163++) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_164 = 0; 10 >= i_164; i_164++) {volatile int keep = 1; if (keep) break;}
 
+    for (unsigned int f_19 = 0; 10 <= f_19; f_19++) {volatile int keep = 1; if (keep) break;}
+
     for (unsigned int i_165 = 0; i_165 > 10; i_165--) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_166 = 0; i_166 >= 10; i_166--) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_167 = 0; 10 < i_167 ; i_167--) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_168 = 0; 10 <= i_168; i_168--) {volatile int keep = 1; if (keep) break;}
+
+    for (unsigned int f_20 = 0; 10 >= f_20; f_20--) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int i_169 = 0; i_169 < 10; i_169 += 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_170 = 0; i_170 <= 10; i_170 += 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_171 = 0; 10 > i_171; i_171 += 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_172 = 0; 10 >= i_172; i_172 += 1) {volatile int keep = 1; if (keep) break;}
 
+    for (unsigned int f_21 = 0; 10 < f_21; f_21 += 1) {volatile int keep = 1; if (keep) break;}
+
     for (unsigned int i_173 = 0; i_173 > 10; i_173 -= 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_174 = 0; i_174 >= 10; i_174 -= 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_175 = 0; 10 < i_175; i_175 -= 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_176 = 0; 10 <= i_176; i_176 -= 1) {volatile int keep = 1; if (keep) break;}
+
+    for (unsigned int f_22 = 0; 10 > f_22; f_22 -= 1) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int i_177 = 0; i_177 < 10; i_177 = i_177 + 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_178 = 0; i_178 <= 10; i_178 = i_178 + 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_179 = 0; 10 > i_179; i_179 = i_179 + 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_180 = 0; 10 >= i_180; i_180 = i_180 + 1) {volatile int keep = 1; if (keep) break;}
 
+    for (unsigned int f_23 = 0; 10 <= f_23; f_23 = f_23 + 1) {volatile int keep = 1; if (keep) break;}
+
     for (unsigned int i_181 = 0; i_181 > 10; i_181 = i_181 - 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_182 = 0; i_182 >= 10; i_182 = i_182 - 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_183 = 0; 10 < i_183; i_183 = i_183 - 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_184 = 0; 10 <= i_184; i_184 = i_184 - 1) {volatile int keep = 1; if (keep) break;}
 
+    for (unsigned int f_24 = 0; 10 >= f_24; f_24 = f_24 - 1) {volatile int keep = 1; if (keep) break;}
+
     for (unsigned int i_185 = 0; i_185 < 10; i_185 = 1 + i_185) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_186 = 0; i_186 <= 10; i_186 = 1 + i_186) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_187 = 0; 10 > i_187; i_187 = 1 + i_187) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_188 = 0; 10 >= i_188; i_188 = 1 + i_188) {volatile int keep = 1; if (keep) break;}
+
+    for (unsigned int f_25 = 0; 10 < f_25; f_25 = 1 + f_25) {volatile int keep = 1; if (keep) break;}
 
     _signed_char = 1;
     for (int i_189 = 0; i_189 < 10; i_189 += _signed_char) {volatile int keep = 1; if (keep) break;}
@@ -372,10 +422,14 @@ void test_idiomatize_loops()
     for (int i_191 = 0; 10 > i_191; i_191 += _signed_char) {volatile int keep = 1; if (keep) break;}
     for (int i_192 = 0; 10 >= i_192; i_192 += _signed_char) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_26 = 0; 10 < f_26; f_26 += _signed_char) {volatile int keep = 1; if (keep) break;}
+
     for (int i_193 = 0; i_193 > 10; i_193 -= _signed_char) {volatile int keep = 1; if (keep) break;}
     for (int i_194 = 0; i_194 >= 10; i_194 -= _signed_char) {volatile int keep = 1; if (keep) break;}
     for (int i_195 = 0; 10 < i_195; i_195 -= _signed_char) {volatile int keep = 1; if (keep) break;}
     for (int i_196 = 0; 10 <= i_196; i_196 -= _signed_char) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_27 = 0; 10 >= f_27; f_27 -= _signed_char) {volatile int keep = 1; if (keep) break;}
 
     _short = -1;
     for (int i_197 = 0; i_197 > 10; i_197 += _short) {volatile int keep = 1; if (keep) break;}
@@ -383,10 +437,14 @@ void test_idiomatize_loops()
     for (int i_199 = 0; 10 < i_199; i_199 += _short) {volatile int keep = 1; if (keep) break;}
     for (int i_200 = 0; 10 <= i_200; i_200 += _short) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_28 = 0; 10 >= f_28; f_28 += _short) {volatile int keep = 1; if (keep) break;}
+
     for (int i_201 = 0; i_201 < 10; i_201 -= _short) {volatile int keep = 1; if (keep) break;}
     for (int i_202 = 0; i_202 <= 10; i_202 -= _short) {volatile int keep = 1; if (keep) break;}
     for (int i_203 = 0; 10 > i_203; i_203 -= _short) {volatile int keep = 1; if (keep) break;}
     for (int i_204 = 0; 10 >= i_204; i_204 -= _short) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_29 = 0; 10 < f_29; f_29 -= _short) {volatile int keep = 1; if (keep) break;}
 
     stable_variable = 1;
     for (int i_205 = 0; i_205 < 10; i_205 = i_205 + stable_variable) {volatile int keep = 1; if (keep) break;}
@@ -394,10 +452,16 @@ void test_idiomatize_loops()
     for (int i_207 = 0; 10 > i_207; i_207 = i_207 + stable_variable) {volatile int keep = 1; if (keep) break;}
     for (int i_208 = 0; 10 >= i_208; i_208 = i_208 + stable_variable) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_30 = 0; 10 < f_30; f_30 = f_30 + stable_variable) {volatile int keep = 1; if (keep) break;}
+    variable = 1;
+    for (int f_31 = 0; 10 >= f_31; f_31 = f_31 + variable) {volatile int keep = 1; if (keep) break;}
+
     for (int i_209 = 0; i_209 > 10; i_209 = i_209 - stable_variable) {volatile int keep = 1; if (keep) break;}
     for (int i_210 = 0; i_210 >= 10; i_210 = i_210 - stable_variable) {volatile int keep = 1; if (keep) break;}
     for (int i_211 = 0; 10 < i_211; i_211 = i_211 - stable_variable) {volatile int keep = 1; if (keep) break;}
     for (int i_212 = 0; 10 <= i_212; i_212 = i_212 - stable_variable) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_32 = 0; 10 >= f_32; f_32 = f_32 - stable_variable) {volatile int keep = 1; if (keep) break;}
 
     _int8_t = -1;
     for (int i_213 = 0; i_213 > 10; i_213 = i_213 + _int8_t) {volatile int keep = 1; if (keep) break;}
@@ -405,10 +469,14 @@ void test_idiomatize_loops()
     for (int i_215 = 0; 10 < i_215; i_215 = i_215 + _int8_t) {volatile int keep = 1; if (keep) break;}
     for (int i_216 = 0; 10 <= i_216; i_216 = i_216 + _int8_t) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_33 = 0; 10 >= f_33; f_33 = f_33 + _int8_t) {volatile int keep = 1; if (keep) break;}
+
     for (int i_217 = 0; i_217 < 10; i_217 = i_217 - _int8_t) {volatile int keep = 1; if (keep) break;}
     for (int i_218 = 0; i_218 <= 10; i_218 = i_218 - _int8_t) {volatile int keep = 1; if (keep) break;}
     for (int i_219 = 0; 10 > i_219; i_219 = i_219 - _int8_t) {volatile int keep = 1; if (keep) break;}
     for (int i_220 = 0; 10 >= i_220; i_220 = i_220 - _int8_t) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_34 = 0; 10 < f_34; f_34 = f_34 - _int8_t) {volatile int keep = 1; if (keep) break;}
 
     _int16_t = 1;
     for (int i_221 = 0; i_221 < 10; i_221 = _int16_t + i_221) {volatile int keep = 1; if (keep) break;}
@@ -416,11 +484,15 @@ void test_idiomatize_loops()
     for (int i_223 = 0; 10 > i_223; i_223 = _int16_t + i_223) {volatile int keep = 1; if (keep) break;}
     for (int i_224 = 0; 10 >= i_224; i_224 = _int16_t + i_224) {volatile int keep = 1; if (keep) break;}
 
+    for (int f_35 = 0; 10 < f_35; f_35 = _int16_t + f_35) {volatile int keep = 1; if (keep) break;}
+
     _int16_t = -1;
     for (int i_225 = 0; i_225 > 10; i_225 = _int16_t + i_225) {volatile int keep = 1; if (keep) break;}
     for (int i_226 = 0; i_226 >= 10; i_226 = _int16_t + i_226) {volatile int keep = 1; if (keep) break;}
     for (int i_227 = 0; 10 < i_227; i_227 = _int16_t + i_227) {volatile int keep = 1; if (keep) break;}
     for (int i_228 = 0; 10 <= i_228; i_228 = _int16_t + i_228) {volatile int keep = 1; if (keep) break;}
+
+    for (int f_36 = 0; 10 >= f_36; f_36 = _int16_t + f_36) {volatile int keep = 1; if (keep) break;}
 
     // END
 
@@ -460,16 +532,21 @@ static void receive_t_values_for_l
 
 static void receive_stable_t_values_for_n
 (
-    int variable,
-    const int variable_const,
-    outer_struct_t outer_struct,
-    const outer_struct_t outer_struct_const
+    int stable_variable,
+    const int stable_variable_const,
+    outer_struct_t stable_outer_struct,
+    const outer_struct_t stable_outer_struct_const
 )
 {
-    for (int i_244 = 0; i_244 < variable; i_244++) {volatile int keep = 1; if (keep) break;}
-    for (int i_245 = 0; i_245 < variable_const; i_245++) {volatile int keep = 1; if (keep) break;}
-    for (int i_246 = 0; i_246 < outer_struct.x; i_246++) {volatile int keep = 1; if (keep) break;}
-    for (int i_247 = 0; i_247 < outer_struct.inner_struct.x; i_247++) {volatile int keep = 1; if (keep) break;}
-    for (int i_248 = 0; i_248 < outer_struct_const.x; i_248++) {volatile int keep = 1; if (keep) break;}
-    for (int i_249 = 0; i_249 < outer_struct_const.inner_struct.x; i_249++) {volatile int keep = 1; if (keep) break;}
+    for (int i_244 = 0; i_244 < stable_variable; i_244++) {volatile int keep = 1; if (keep) break;}
+    for (int i_245 = 0; i_245 < stable_variable_const; i_245++) {volatile int keep = 1; if (keep) break;}
+    for (int i_246 = 0; i_246 < stable_outer_struct.x; i_246++) {volatile int keep = 1; if (keep) break;}
+    for (int i_247 = 0; i_247 < stable_outer_struct.inner_struct.x; i_247++) {volatile int keep = 1; if (keep) break;}
+    for (int i_248 = 0; i_248 < stable_outer_struct_const.x; i_248++) {volatile int keep = 1; if (keep) break;}
+    for (int i_249 = 0; i_249 < stable_outer_struct_const.inner_struct.x; i_249++) {volatile int keep = 1; if (keep) break;}
+
+    int* variable_ptr = &stable_variable;
+    for (int f_37 = 0; f_37 < stable_variable; f_37++) {volatile int keep = 1; if (keep) break;}
+    outer_struct_t* stable_outer_struct_ptr = &stable_outer_struct;
+    for (int f_38 = 0; f_38 < stable_outer_struct.x; f_38++) {volatile int keep = 1; if (keep) break;}
 }

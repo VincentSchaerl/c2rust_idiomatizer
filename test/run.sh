@@ -23,8 +23,7 @@ bear --output "$test_dir/in/compile_commands.json" -- make -C "$test_dir/in"
   --output-dir "$test_dir/out/transpile" \
   "$test_dir/in/compile_commands.json"
 cargo fmt --manifest-path "$test_dir/out/transpile/Cargo.toml"
-cargo build --manifest-path "$test_dir/out/transpile/Cargo.toml"
-cargo run --manifest-path "$test_dir/out/transpile/Cargo.toml"
+RUSTFLAGS="-Awarnings" cargo run --manifest-path "$test_dir/out/transpile/Cargo.toml"
 
 cp -r "$test_dir/out/transpile/"* "$test_dir/out/refactor"
 cd "$test_dir/out/refactor"
@@ -40,6 +39,11 @@ cd "$test_dir/out/refactor"
   --plugin-name c2rust_idiomatizer \
   --rewrite-mode inplace \
   remove_redundant_integer_casts
+"$c2rust_dir/c2rust-refactor" \
+  --cargo \
+  --plugin-dir "$plugin_dir" \
+  --plugin-name c2rust_idiomatizer \
+  --rewrite-mode inplace \
+  idiomatize_loops
 cargo fmt --manifest-path "$test_dir/out/refactor/Cargo.toml"
-cargo build --manifest-path "$test_dir/out/refactor/Cargo.toml"
-cargo run --manifest-path "$test_dir/out/refactor/Cargo.toml"
+RUSTFLAGS="-Awarnings"  cargo run --manifest-path "$test_dir/out/refactor/Cargo.toml"
