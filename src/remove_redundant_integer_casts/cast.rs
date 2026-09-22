@@ -47,14 +47,23 @@ pub(super) fn remove_casts_if_redundant_for_expected_type(
         TypeInfo::Array(element_type) => match expr.kind {
             ExprKind::Array(ref mut elements) => {
                 for element in elements.iter_mut() {
-                    remove_casts_if_redundant_for_expected_type(element, element_type, bit_widths);
+                    remove_casts_if_redundant_for_expected_type(
+                        element,
+                        element_type,
+                        bit_widths,
+                    );
                 }
             }
             ExprKind::Repeat(ref mut element, _) => {
-                remove_casts_if_redundant_for_expected_type(element, element_type, bit_widths);
+                remove_casts_if_redundant_for_expected_type(
+                    element,
+                    element_type,
+                    bit_widths,
+                );
             }
             _ => {}
         },
+        TypeInfo::Pointer(_) | TypeInfo::Struct(_) => {}
     }
 }
 
