@@ -193,10 +193,24 @@ pub(super) fn base_case(
         };
         let start_for_descending = start.clone();
 
-        let bound_for_ascending = normalize_bound_for_ascending(&condition.bound);
+        let normalized_stable_bound = match &bound_kind {
+            BoundKind::SameTypeCastStable => match same_type_cast_operand(&condition.bound) {
+                Some(expr) => expr,
+                None => return,
+            },
+            _ => condition.bound.clone(),
+        };
+
+        let bound_for_ascending = match &bound_kind {
+            BoundKind::Literal(_) => normalize_bound_for_ascending(&condition.bound),
+            BoundKind::SameTypeCastStable => normalized_stable_bound.clone(),
+            BoundKind::Stable | BoundKind::CastStable => condition.bound.clone(),
+        };
         let bound_for_descending_inclusive = match &bound_kind {
             BoundKind::Literal(value) => typed_literal_expr(st, cx, *value, induction_ty),
-            BoundKind::Stable | BoundKind::CastStable => condition.bound.clone(),
+            BoundKind::Stable | BoundKind::CastStable | BoundKind::SameTypeCastStable => {
+                normalized_stable_bound.clone()
+            }
         };
         let bound_for_descending_strict = match &bound_kind {
             BoundKind::Literal(value) => {
@@ -206,8 +220,8 @@ pub(super) fn base_case(
                 };
                 typed_literal_expr(st, cx, plus_one, induction_ty)
             }
-            BoundKind::Stable | BoundKind::CastStable => {
-                make_add_one_expr(st, cx, condition.bound.clone())
+            BoundKind::Stable | BoundKind::CastStable | BoundKind::SameTypeCastStable => {
+                make_add_one_expr(st, cx, normalized_stable_bound.clone())
             }
         };
 
@@ -329,6 +343,7 @@ struct TypeEnvironment {
     locals: HashMap<HirId, BaseMeta>,
     items: HashMap<DefId, BaseMeta>,
     struct_fields: HashMap<DefId, HashMap<String, TypeInfo>>,
+    item_initializers: HashMap<DefId, P<Expr>>,
 
     // A `static` or `const` appearing as a statement inside a block is a
     // function-local item.  This distinction matters for stable array/struct
@@ -379,10 +394,14 @@ impl TypeEnvironment {
                 }
                 env.struct_fields.insert(cx.node_def_id(item.id), fields);
             }
-            ItemKind::Static(ty, mutability, _) => {
+            ItemKind::Static(ty, mutability, init) => {
+                let item_id = cx.node_def_id(item.id);
+                if let Some(init) = init {
+                    env.item_initializers.insert(item_id, init.clone());
+                }
                 if let Some(type_info) = type_info_from_ty(ty, cx) {
                     env.items.insert(
-                        cx.node_def_id(item.id),
+                        item_id,
                         BaseMeta {
                             type_info,
                             mutable: *mutability == Mutability::Mut,
@@ -391,10 +410,14 @@ impl TypeEnvironment {
                     );
                 }
             }
-            ItemKind::Const(_, ty, _) => {
+            ItemKind::Const(_, ty, init) => {
+                let item_id = cx.node_def_id(item.id);
+                if let Some(init) = init {
+                    env.item_initializers.insert(item_id, init.clone());
+                }
                 if let Some(type_info) = type_info_from_ty(ty, cx) {
                     env.items.insert(
-                        cx.node_def_id(item.id),
+                        item_id,
                         BaseMeta {
                             type_info,
                             mutable: false,
@@ -1033,6 +1056,7 @@ fn classify_condition(cond: &Expr, induction_hir_id: HirId, cx: &RefactorCtxt) -
 enum BoundKind {
     Literal(IntValue),
     Stable,
+    SameTypeCastStable,
     CastStable,
 }
 
@@ -1063,7 +1087,9 @@ fn classify_bound(
     if let Some(stable) = stable_value(bound, while_span, loop_body_hir_ids, env, cx, target) {
         if stable.value_type == induction_ty {
             if direction == Direction::DescendingStrict {
-                let assigned = last_direct_literal_assignment(&stable.place, preceding, cx, target)?;
+                let assigned = statically_determinable_value(
+                    &stable, preceding, env, cx, target,
+                )?;
                 if !integer_value_fits_type(assigned, induction_ty, target) {
                     return None;
                 }
@@ -1076,30 +1102,56 @@ fn classify_bound(
         }
     }
 
-    if let ExprKind::Cast(inner, cast_ty) = &bound.kind {
-        if integer_type_from_ty(cast_ty) != Some(induction_ty) {
-            return None;
-        }
-        let stable = stable_value(inner, while_span, loop_body_hir_ids, env, cx, target)?;
-        if stable.value_type == induction_ty {
-            return None;
-        }
+    // Constraint 4.c additionally permits a redundant cast to T around an
+    // already stable T-value, with or without one surrounding pair of
+    // parentheses. Constraint 4.d permits a cast to T from a different
+    // primitive integer type, but only without the extra parentheses.
+    let (cast_expr, parenthesized) = match &bound.kind {
+        ExprKind::Cast(..) => (bound, false),
+        ExprKind::Paren(inner) if matches!(inner.kind, ExprKind::Cast(..)) => (&**inner, true),
+        _ => return None,
+    };
 
+    let (inner, cast_ty) = match &cast_expr.kind {
+        ExprKind::Cast(inner, cast_ty) => (inner, cast_ty),
+        _ => return None,
+    };
+    if integer_type_from_ty(cast_ty) != Some(induction_ty) {
+        return None;
+    }
+
+    let stable = stable_value(inner, while_span, loop_body_hir_ids, env, cx, target)?;
+    if stable.value_type == induction_ty {
         if direction == Direction::DescendingStrict {
-            let assigned = last_direct_literal_assignment(&stable.place, preceding, cx, target)?;
-            if !integer_value_fits_type(assigned, stable.value_type, target) {
-                return None;
-            }
-            let cast_value = cast_integer_value(assigned, induction_ty, target);
-            let plus_one = add_one(cast_value)?;
+            let assigned = statically_determinable_value(
+                &stable, preceding, env, cx, target,
+            )?;
+            let plus_one = add_one(assigned)?;
             if !integer_value_fits_type(plus_one, induction_ty, target) {
                 return None;
             }
         }
-        return Some(BoundKind::CastStable);
+        return Some(BoundKind::SameTypeCastStable);
     }
 
-    None
+    if parenthesized {
+        return None;
+    }
+
+    if direction == Direction::DescendingStrict {
+        let assigned = statically_determinable_value(
+            &stable, preceding, env, cx, target,
+        )?;
+        if !integer_value_fits_type(assigned, stable.value_type, target) {
+            return None;
+        }
+        let cast_value = cast_integer_value(assigned, induction_ty, target);
+        let plus_one = add_one(cast_value)?;
+        if !integer_value_fits_type(plus_one, induction_ty, target) {
+            return None;
+        }
+    }
+    Some(BoundKind::CastStable)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1248,7 +1300,9 @@ fn classify_step(
         (value, None)
     } else {
         let stable = stable_value(&increment.step_expr, while_span, loop_body_hir_ids, env, cx, target)?;
-        let assigned = last_direct_literal_assignment(&stable.place, preceding, cx, target)?;
+        let assigned = statically_determinable_value(
+            &stable, preceding, env, cx, target,
+        )?;
         if !integer_value_fits_type(assigned, stable.value_type, target) {
             return None;
         }
@@ -1262,8 +1316,8 @@ fn classify_step(
     if increment.cast_to_induction_type
         && !integer_value_fits_type(value, induction_ty, target)
     {
-        // For a casted STEP, the cast is required to preserve the mathematical
-        // value, not merely to compile.
+        // If the increment contains `STEP as T`, `step` must lie within the
+        // value range of T.
         return None;
     }
 
@@ -1314,7 +1368,7 @@ fn resolves_to_local(expr: &Expr, expected: HirId, cx: &RefactorCtxt) -> bool {
 }
 
 // -----------------------------------------------------------------------------
-// Direct-statement literal history
+// Statically determinable literal values
 // -----------------------------------------------------------------------------
 
 fn collect_preceding_statements(krate: &Crate) -> HashMap<rustc_ast::NodeId, Vec<Stmt>> {
@@ -1425,6 +1479,78 @@ fn statements_access_local(
     false
 }
 
+fn statically_determinable_value(
+    stable: &StableValue,
+    preceding: &[Stmt],
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
+    target: TargetInfo,
+) -> Option<IntValue> {
+    global_literal_initializer_value(stable, env, target)
+        .or_else(|| last_direct_literal_assignment(&stable.place, preceding, cx, target))
+}
+
+fn global_literal_initializer_value(
+    stable: &StableValue,
+    env: &TypeEnvironment,
+    target: TargetInfo,
+) -> Option<IntValue> {
+    let item_id = match stable.place.base {
+        BaseKey::Item(id) => id,
+        BaseKey::Local(_) => return None,
+    };
+
+    // Clause (a) is only for globals. Function-local const/static items are
+    // handled by clause (b) through the direct-statement history below.
+    if env.item_is_defined_inside_function(item_id) {
+        return None;
+    }
+
+    let meta = env.base_meta(BaseKey::Item(item_id))?;
+    match meta.origin {
+        BaseOrigin::Const => {}
+        BaseOrigin::Static if !meta.mutable => {}
+        _ => return None,
+    }
+
+    let initializer = env.item_initializers.get(&item_id)?;
+    literal_value_from_initializer(initializer, &stable.place.projections, target)
+}
+
+fn literal_value_from_initializer(
+    initializer: &Expr,
+    projections: &[PlaceProjection],
+    target: TargetInfo,
+) -> Option<IntValue> {
+    if projections.is_empty() {
+        return normalized_unsuffixed_integer_literal_value(initializer, target);
+    }
+
+    match (&projections[0], &initializer.kind) {
+        (PlaceProjection::Index(IntValue::NonNegative(index)), ExprKind::Array(elements)) => {
+            let index = usize::try_from(*index).ok()?;
+            literal_value_from_initializer(elements.get(index)?, &projections[1..], target)
+        }
+        (PlaceProjection::Index(IntValue::NonNegative(_)), ExprKind::Repeat(element, _)) => {
+            // The source crate has already type-checked, so an occurring array
+            // index is in bounds. A repeat initializer supplies the same
+            // initializer expression for every corresponding element.
+            literal_value_from_initializer(element, &projections[1..], target)
+        }
+        (PlaceProjection::Field(field_name), ExprKind::Struct(struct_expr)) => {
+            let field = struct_expr
+                .fields
+                .iter()
+                .find(|field| field.ident.name.as_str() == field_name.as_str())?;
+            literal_value_from_initializer(&field.expr, &projections[1..], target)
+        }
+        (_, ExprKind::Paren(inner)) => {
+            literal_value_from_initializer(inner, projections, target)
+        }
+        _ => None,
+    }
+}
+
 fn last_direct_literal_assignment(
     place: &PlaceKey,
     preceding: &[Stmt],
@@ -1445,9 +1571,14 @@ fn last_direct_literal_assignment(
     None
 }
 
-fn direct_literal_write(stmt: &Stmt, place: &PlaceKey, cx: &RefactorCtxt, target: TargetInfo) -> Option<IntValue> {
+fn direct_literal_write(
+    stmt: &Stmt,
+    place: &PlaceKey,
+    cx: &RefactorCtxt,
+    target: TargetInfo,
+) -> Option<IntValue> {
     match &stmt.kind {
-        StmtKind::Local(local) if place.projections.is_empty() => {
+        StmtKind::Local(local) => {
             let base = match place.base {
                 BaseKey::Local(id) => id,
                 _ => return None,
@@ -1456,9 +1587,13 @@ fn direct_literal_write(stmt: &Stmt, place: &PlaceKey, cx: &RefactorCtxt, target
             if local_id != base {
                 return None;
             }
-            normalized_unsuffixed_integer_literal_value(local_initializer(local)?, target)
+            literal_value_from_initializer(
+                local_initializer(local)?,
+                &place.projections,
+                target,
+            )
         }
-        StmtKind::Item(item) if place.projections.is_empty() => {
+        StmtKind::Item(item) => {
             let base = match place.base {
                 BaseKey::Item(id) => id,
                 _ => return None,
@@ -1471,7 +1606,7 @@ fn direct_literal_write(stmt: &Stmt, place: &PlaceKey, cx: &RefactorCtxt, target
                 ItemKind::Const(_, _, init) => init.as_ref()?,
                 _ => return None,
             };
-            normalized_unsuffixed_integer_literal_value(init, target)
+            literal_value_from_initializer(init, &place.projections, target)
         }
         StmtKind::Expr(expr) | StmtKind::Semi(expr) => {
             let (lhs, rhs) = match &expr.kind {
@@ -2041,6 +2176,18 @@ fn normalize_bound_for_ascending(expr: &P<Expr>) -> P<Expr> {
     match &expr.kind {
         ExprKind::Paren(inner) if unsuffixed_integer_literal_value(inner).is_some() => inner.clone(),
         _ => expr.clone(),
+    }
+}
+
+fn same_type_cast_operand(expr: &P<Expr>) -> Option<P<Expr>> {
+    let cast_expr = match &expr.kind {
+        ExprKind::Cast(..) => &**expr,
+        ExprKind::Paren(inner) => &**inner,
+        _ => return None,
+    };
+    match &cast_expr.kind {
+        ExprKind::Cast(inner, _) => Some(inner.clone()),
+        _ => None,
     }
 }
 
