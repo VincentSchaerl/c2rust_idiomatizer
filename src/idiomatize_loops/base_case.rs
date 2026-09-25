@@ -345,13 +345,11 @@ struct TypeEnvironment {
     forbidden_reference_spans: HashMap<BaseKey, Vec<Span>>,
     mutation_spans: HashMap<BaseKey, Vec<Span>>,
 
-    // For `ref`/`ref mut` patterns and closure/async captures we deliberately
-    // keep a conservative function-wide guard.  If such syntax occurs before
-    // or during a candidate loop, mutable stable values are rejected unless a
-    // more precise proof is added later.  This can only create false
-    // negatives, never transform a potentially negative case.
+    // For `ref`/`ref mut` patterns we deliberately keep a conservative
+    // function-wide guard. If such syntax occurs before or during a candidate
+    // loop, mutable stable values are rejected unless a more precise
+    // pattern-to-base analysis is added later.
     by_ref_pattern_spans: Vec<Span>,
-    capture_construct_spans: Vec<Span>,
 }
 
 impl TypeEnvironment {
@@ -477,17 +475,12 @@ impl TypeEnvironment {
             return true;
         }
 
-        // These two forms are intentionally conservative because associating
-        // every source-level binding/capture back to one base would require a
-        // second, more complicated pattern/capture analysis.  Rejecting all
-        // mutable stable candidates in their presence is safe.
+        // `ref` / `ref mut` patterns are kept as a conservative
+        // function-wide guard because associating every binding pattern back
+        // to its exact base would require a separate pattern-to-place analysis.
         self.by_ref_pattern_spans
             .iter()
             .any(|span| span.lo() < while_span.hi())
-            || self
-                .capture_construct_spans
-                .iter()
-                .any(|span| span.lo() < while_span.hi())
     }
 
     fn base_modified_during_loop(&self, base: BaseKey, while_span: Span) -> bool {
@@ -766,7 +759,9 @@ fn collect_stability_syntax_facts(
     env: &mut TypeEnvironment,
 ) {
     // Explicit `&`, `&mut`, `&raw const`, `&raw mut`, rustc-introduced
-    // autoref adjustments, direct writes, and capture constructs.
+    // autoref adjustments, and direct writes. Closure/async captures are
+    // checked separately from rustc's capture information so that only
+    // captures by reference are forbidden; captures by value are allowed.
     visit_nodes(krate, |expr: &Expr| {
         match &expr.kind {
             ExprKind::AddrOf(_, _, operand) => {
@@ -782,13 +777,6 @@ fn collect_stability_syntax_facts(
                 if let Some(base) = root_base(lhs, cx) {
                     record_base_span(&mut env.mutation_spans, base, expr.span);
                 }
-            }
-            ExprKind::Closure(..) | ExprKind::Async(..) => {
-                // Conservative: if a closure/async construct occurs before or
-                // during the loop, do not prove a mutable stable value.  This
-                // covers by-reference captures without risking a false
-                // positive.
-                env.capture_construct_spans.push(expr.span);
             }
             _ => {}
         }
@@ -894,8 +882,8 @@ fn stable_value(
         return None;
     }
 
-    // Whether the candidate needs the dynamic "not shared / no reference /
-    // not modified" proof.  Immutable/const cases are accepted directly;
+    // Whether the candidate needs the dynamic "no reference / not modified"
+    // proof. Immutable/const cases are accepted directly;
     // mutable locals/parameters and mutable function-local array/struct
     // statics are permitted only through the corresponding dynamic clauses.
     let needs_dynamic_proof = match place.base {
@@ -933,13 +921,15 @@ fn stable_value(
             return None;
         }
 
-        // Keep rustc's use analysis as an additional mutation proof for
-        // ordinary locals/parameters.  It catches writes that are not obvious
-        // from the surface AST.  Its reference_before_or_during flag is
-        // intentionally ignored for the reason explained above.
+        // Keep rustc's use analysis as an additional proof for ordinary
+        // locals/parameters. It catches writes that are not obvious from the
+        // surface AST and, via closure_min_captures, checks the fourth
+        // forbidden reference-creation form: capture by reference by a
+        // closure, async closure, or async block. Captures by value are not
+        // rejected; there is no separate thread-sharing condition anymore.
         if let BaseKey::Local(id) = place.base {
             let facts = local_stability_facts(id, while_span, loop_body_hir_ids, cx)?;
-            if facts.modified_during_loop {
+            if facts.captured_by_reference_before_or_during || facts.modified_during_loop {
                 return None;
             }
         }
@@ -1602,14 +1592,13 @@ fn hir_node_is_descendant_of(tcx: TyCtxt<'_>, id: HirId, ancestor: HirId) -> boo
 
 #[derive(Default)]
 struct StabilityFacts {
-    reference_before_or_during: bool,
+    captured_by_reference_before_or_during: bool,
     modified_during_loop: bool,
 }
 
 struct StabilityDelegate<'tcx> {
     tcx: TyCtxt<'tcx>,
     tracked: HirId,
-    while_span: Span,
     loop_body_hir_ids: Vec<HirId>,
     facts: StabilityFacts,
 }
@@ -1625,22 +1614,6 @@ impl<'tcx> StabilityDelegate<'tcx> {
             .copied()
             .any(|root| hir_node_is_descendant_of(self.tcx, id, root))
     }
-
-    fn before_or_during_loop(&self, id: HirId) -> bool {
-        if self.inside_loop_body(id) {
-            return true;
-        }
-
-        // The stable-value rule is temporal: a reference created after this
-        // particular while is harmless, even if the same local is used by a
-        // later candidate loop.  Classifying uses as "everything not in the
-        // direct following statements" was too broad for later nested/lowered
-        // HIR nodes.  HIR spans give us the ordering of the actual use site.
-        // A borrow in the condition is also "during" the while and therefore
-        // correctly falls before while_span.hi().
-        let event_span = self.tcx.hir().span(id);
-        event_span.lo() < self.while_span.hi()
-    }
 }
 
 impl<'tcx> Delegate<'tcx> for StabilityDelegate<'tcx> {
@@ -1654,9 +1627,6 @@ impl<'tcx> Delegate<'tcx> for StabilityDelegate<'tcx> {
     ) {
         if !self.tracked(place) {
             return;
-        }
-        if self.before_or_during_loop(place.hir_id) {
-            self.facts.reference_before_or_during = true;
         }
         if self.inside_loop_body(place.hir_id) && borrow_kind == ty::BorrowKind::MutBorrow {
             self.facts.modified_during_loop = true;
@@ -1692,12 +1662,28 @@ fn local_stability_facts(
     let tables = tcx.typeck_body(body_id);
     let infcx = tcx.infer_ctxt().build();
 
+    // `closure_min_captures` records the actual capture mode inferred by
+    // rustc. This is the relevant distinction for the stable-value rule:
+    // ByRef creates a reference to the tracked local, whereas ByValue does not.
+    // Use the capture-kind span for the temporal "before or during" boundary.
+    let captured_by_reference_before_or_during = tables
+        .closure_min_captures
+        .values()
+        .filter_map(|captures| captures.get(&tracked))
+        .flatten()
+        .any(|capture| {
+            matches!(capture.info.capture_kind, ty::UpvarCapture::ByRef(_))
+                && capture.get_capture_kind_span(tcx).lo() < while_span.hi()
+        });
+
     let mut delegate = StabilityDelegate {
         tcx,
         tracked,
-        while_span,
         loop_body_hir_ids: loop_body_hir_ids.to_vec(),
-        facts: StabilityFacts::default(),
+        facts: StabilityFacts {
+            captured_by_reference_before_or_during,
+            modified_during_loop: false,
+        },
     };
     ExprUseVisitor::new(&mut delegate, &infcx, parent, ParamEnv::empty(), tables)
         .consume_body(body);
