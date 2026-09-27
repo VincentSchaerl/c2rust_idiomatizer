@@ -691,7 +691,16 @@ enum BaseKey {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PlaceProjection {
+    // A statically known index (literal or the permitted literal cast chain)
+    // is kept as an exact value so that statically determinable array elements
+    // can be matched to a concrete initializer/assignment.
     Index(IntValue),
+
+    // Stable array indices whose value is not required to be known are enough
+    // for the stable-value definition, but not for the later statically
+    // determinable-value definition.
+    StableIndex,
+
     Field(String),
 }
 
@@ -721,8 +730,13 @@ fn place_key(expr: &Expr, cx: &RefactorCtxt, target: TargetInfo) -> Option<Place
             })
         }
         ExprKind::Index(base, index) => {
+            // Statically determinable array elements admit an unsuffixed
+            // integer literal expression or an integer literal cast expression
+            // (`int as INT_0 as INT_1`). Evaluate the latter with Rust
+            // integer-cast semantics so lossy casts select the correct concrete
+            // element.
             let mut key = place_key(base, cx, target)?;
-            let index = normalized_integer_literal_expression_value(index, target)?;
+            let index = statically_known_array_index_value(index, target)?;
             key.projections.push(PlaceProjection::Index(index));
             Some(key)
         }
@@ -734,6 +748,125 @@ fn place_key(expr: &Expr, cx: &RefactorCtxt, target: TargetInfo) -> Option<Place
         }
         _ => None,
     }
+}
+
+fn statically_known_array_index_value(index: &Expr, target: TargetInfo) -> Option<IntValue> {
+    // For statically determinable array elements, every index expression must
+    // be either an unsuffixed integer literal expression or an integer literal
+    // cast expression (`int as INT_0 as INT_1`). Since the crate has already
+    // type-checked, an index expression occurring here has the type required by
+    // Rust array indexing. Evaluate both casts with normal Rust integer-cast
+    // semantics so lossy casts select the correct concrete index.
+    statically_determinable_literal_expression_value(index, target)
+}
+
+fn stable_place_key(
+    expr: &Expr,
+    while_span: Span,
+    loop_body_hir_ids: &[HirId],
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
+    target: TargetInfo,
+) -> Option<PlaceKey> {
+    match &expr.kind {
+        ExprKind::Path(..) => {
+            let base = match cx.try_resolve_expr_hir(expr)? {
+                Res::Local(id) => BaseKey::Local(id),
+                Res::Def(_, id) => BaseKey::Item(id),
+                _ => return None,
+            };
+            Some(PlaceKey {
+                base,
+                projections: Vec::new(),
+            })
+        }
+        ExprKind::Index(base, index) => {
+            let mut key = stable_place_key(
+                base,
+                while_span,
+                loop_body_hir_ids,
+                env,
+                cx,
+                target,
+            )?;
+            let projection = stable_array_index_projection(
+                index,
+                while_span,
+                loop_body_hir_ids,
+                env,
+                cx,
+                target,
+            )?;
+            key.projections.push(projection);
+            Some(key)
+        }
+        ExprKind::Field(base, ident) => {
+            let mut key = stable_place_key(
+                base,
+                while_span,
+                loop_body_hir_ids,
+                env,
+                cx,
+                target,
+            )?;
+            key.projections
+                .push(PlaceProjection::Field(ident.name.to_string()));
+            Some(key)
+        }
+        _ => None,
+    }
+}
+
+fn stable_array_index_projection(
+    index: &Expr,
+    while_span: Span,
+    loop_body_hir_ids: &[HirId],
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
+    target: TargetInfo,
+) -> Option<PlaceProjection> {
+    // Stable-index forms (1) and (2): an unsuffixed integer literal
+    // expression, or the double-cast form `INDEX_0 as INT_0 as usize`.
+    // These forms also have a concrete index value, which is retained for
+    // later static determinability.
+    if let Some(value) = statically_known_array_index_value(index, target) {
+        return Some(PlaceProjection::Index(value));
+    }
+
+    // Stable-index form (3): a stable usize-value.  stable_value recursively
+    // validates array-element indices, so constructs such as a[b[i]] terminate
+    // naturally at the finite expression tree.
+    if let Some(stable) = stable_value(
+        index,
+        while_span,
+        loop_body_hir_ids,
+        env,
+        cx,
+        target,
+    ) {
+        if stable.value_type == IntegerType::Primitive("usize") {
+            return Some(PlaceProjection::StableIndex);
+        }
+    }
+
+    // Stable-index form (4): `INDEX_1 as usize`, where INDEX_1 is a stable
+    // primitive-integer value. stable_value returning a value proves exactly
+    // that integer-valued stability requirement here.
+    if let ExprKind::Cast(inner, cast_ty) = &index.kind {
+        if integer_type_from_ty(cast_ty) == Some(IntegerType::Primitive("usize")) {
+            stable_value(
+                inner,
+                while_span,
+                loop_body_hir_ids,
+                env,
+                cx,
+                target,
+            )?;
+            return Some(PlaceProjection::StableIndex);
+        }
+    }
+
+    None
 }
 
 fn root_base(expr: &Expr, cx: &RefactorCtxt) -> Option<BaseKey> {
@@ -871,7 +1004,14 @@ fn stable_value(
         TypeInfo::Integer(integer) => integer,
         _ => return None,
     };
-    let place = place_key(expr, cx, target)?;
+    let place = stable_place_key(
+        expr,
+        while_span,
+        loop_body_hir_ids,
+        env,
+        cx,
+        target,
+    )?;
     let base_meta = env.base_meta(place.base)?;
 
     let is_plain_value = place.projections.is_empty();
@@ -879,7 +1019,9 @@ fn stable_value(
         && place
             .projections
             .iter()
-            .all(|projection| matches!(projection, PlaceProjection::Index(_)));
+            .all(|projection| {
+                matches!(projection, PlaceProjection::Index(_) | PlaceProjection::StableIndex)
+            });
     let is_struct_field = !place.projections.is_empty()
         && place
             .projections
@@ -924,6 +1066,12 @@ fn stable_value(
             _ => return None,
         },
         BaseKey::Local(_) => match base_meta.origin {
+            BaseOrigin::Param if is_array_element => {
+                // The stable-array clauses cover global arrays and arrays
+                // defined inside the function, but not arrays passed as
+                // function parameters.
+                return None;
+            }
             BaseOrigin::Param | BaseOrigin::Local => base_meta.mutable,
             _ => return None,
         },
@@ -1486,6 +1634,19 @@ fn statically_determinable_value(
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> Option<IntValue> {
+    // Stable array elements may use stable dynamic indices. The stronger
+    // statically-determinable definition accepts only statically known indices:
+    // an unsuffixed integer literal expression or an integer literal cast
+    // expression (`int as INT_0 as INT_1`).
+    if stable
+        .place
+        .projections
+        .iter()
+        .any(|projection| matches!(projection, PlaceProjection::StableIndex))
+    {
+        return None;
+    }
+
     global_literal_initializer_value(stable, env, target)
         .or_else(|| last_direct_literal_assignment(&stable.place, preceding, cx, target))
 }
@@ -1500,8 +1661,9 @@ fn global_literal_initializer_value(
         BaseKey::Local(_) => return None,
     };
 
-    // Clause (a) is only for globals. Function-local const/static items are
-    // handled by clause (b) through the direct-statement history below.
+    // The global statically-determinable cases cover plain global values and
+    // global array elements / struct fields. Function-local const/static items
+    // are handled by the direct-statement history below.
     if env.item_is_defined_inside_function(item_id) {
         return None;
     }
@@ -1523,7 +1685,7 @@ fn literal_value_from_initializer(
     target: TargetInfo,
 ) -> Option<IntValue> {
     if projections.is_empty() {
-        return normalized_unsuffixed_integer_literal_value(initializer, target);
+        return statically_determinable_literal_expression_value(initializer, target);
     }
 
     match (&projections[0], &initializer.kind) {
@@ -1616,7 +1778,7 @@ fn direct_literal_write(
             if place_key(lhs, cx, target).as_ref() != Some(place) {
                 return None;
             }
-            normalized_unsuffixed_integer_literal_value(rhs, target)
+            statically_determinable_literal_expression_value(rhs, target)
         }
         _ => None,
     }
@@ -2067,23 +2229,6 @@ impl IntValue {
     }
 }
 
-fn integer_literal_expression_value(expr: &Expr) -> Option<IntValue> {
-    match &expr.kind {
-        ExprKind::Lit(lit) => match lit.kind {
-            LitKind::Int(value, _) => Some(IntValue::NonNegative(value)),
-            _ => None,
-        },
-        ExprKind::Unary(UnOp::Neg, inner) => match &inner.kind {
-            ExprKind::Lit(lit) => match lit.kind {
-                LitKind::Int(value, _) => Some(IntValue::Negative(value)),
-                _ => None,
-            },
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 fn unsuffixed_integer_literal_value(expr: &Expr) -> Option<IntValue> {
     match &expr.kind {
         ExprKind::Lit(lit) => match lit.kind {
@@ -2105,61 +2250,35 @@ fn unsuffixed_integer_literal_value(expr: &Expr) -> Option<IntValue> {
     }
 }
 
-fn normalized_integer_literal_expression_value(
+fn integer_literal_cast_expression_value(
     expr: &Expr,
     target: TargetInfo,
 ) -> Option<IntValue> {
-    if let Some(value) = integer_literal_expression_value(expr) {
-        return Some(value);
-    }
+    // Exactly `int as INT_0 as INT_1`, with an unsuffixed integer literal
+    // expression `int` and two primitive-integer cast targets.
+    let (first_cast, int_1_ty) = match &expr.kind {
+        ExprKind::Cast(inner, ty) => (inner, ty),
+        _ => return None,
+    };
+    let int_1_ty = integer_type_from_ty(int_1_ty)?;
 
-    // C2Rust must cast array indices to usize and may leave intermediate
-    // integer casts in place.  Treat such a cast chain as the original literal
-    // expression only when every cast preserves its mathematical value.  This
-    // keeps the projection key exact (e.g. it will not confuse
-    // `300 as u8 as usize` with the literal index 300).
-    if let ExprKind::Cast(inner, cast_ty) = &expr.kind {
-        let value = normalized_integer_literal_expression_value(inner, target)?;
-        let cast_ty = integer_type_from_ty(cast_ty)?;
-        if integer_value_fits_type(value, cast_ty, target) {
-            return Some(value);
-        }
-    }
+    let (literal, int_0_ty) = match &first_cast.kind {
+        ExprKind::Cast(inner, ty) => (inner, ty),
+        _ => return None,
+    };
+    let int_0_ty = integer_type_from_ty(int_0_ty)?;
 
-    None
+    let value = unsuffixed_integer_literal_value(literal)?;
+    let value = cast_integer_value(value, int_0_ty, target);
+    Some(cast_integer_value(value, int_1_ty, target))
 }
 
-fn normalized_unsuffixed_integer_literal_value(
+fn statically_determinable_literal_expression_value(
     expr: &Expr,
     target: TargetInfo,
 ) -> Option<IntValue> {
-    if let Some(value) = unsuffixed_integer_literal_value(expr) {
-        return Some(value);
-    }
-
-    // The C source contains a direct unsuffixed literal assignment, but C2Rust
-    // can materialize it as a chain such as `-1 as i32 as i16`.  Accept only
-    // value-preserving integer casts around an innermost unsuffixed literal.
-    // This does not accept arbitrary constant expressions or lossy casts.
-    if let ExprKind::Cast(inner, cast_ty) = &expr.kind {
-        let value = normalized_unsuffixed_integer_literal_value(inner, target)?;
-        let cast_ty = integer_type_from_ty(cast_ty)?;
-        if integer_value_fits_type(value, cast_ty, target) {
-            return Some(value);
-        }
-    }
-
-    // Be robust to the alternative AST parenthesization `-(1 as T)` while
-    // still requiring the only non-cast leaf to be an unsuffixed literal.
-    if let ExprKind::Unary(UnOp::Neg, inner) = &expr.kind {
-        if let IntValue::NonNegative(magnitude) =
-            normalized_unsuffixed_integer_literal_value(inner, target)?
-        {
-            return Some(IntValue::Negative(magnitude));
-        }
-    }
-
-    None
+    unsuffixed_integer_literal_value(expr)
+        .or_else(|| integer_literal_cast_expression_value(expr, target))
 }
 
 fn bound_literal_value(expr: &Expr) -> Option<IntValue> {
