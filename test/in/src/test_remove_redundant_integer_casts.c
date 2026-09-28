@@ -205,8 +205,12 @@ void test_remove_redundant_integer_casts()
         outer_struct_ptr_const_1
     );
 
+    // Comparison with the value returned by a function
+    if (-117 > return_integer()) {volatile int keep = 0;}
+    if (118 < return_integer()) {volatile int keep = 0;}
+
     // Passing to a function
-    receive_integer(-117);
+    receive_integer(-119);
 
     // Return of a function
     return_integer();
@@ -218,19 +222,19 @@ static void keep_variable_global_const(int variable_global_const) {}
 
 static void assign_to_variable(int variable)
 {
-    variable = 118;
+    variable = 120;
 }
 
 static void compare_with_variable_value(int variable, const int variable_const)
 {
-    if (-119 > variable) {volatile int keep = 0;}
-    if (120 < variable_const) {volatile int keep = 0;}
+    if (-121 <= variable) {volatile int keep = 0;}
+    if (122 != variable_const) {volatile int keep = 0;}
 }
 
 static void assign_to_memory_location(int* pointer, int* const pointer_const_1)
 {
-    *pointer = -121;
-    *pointer_const_1 = 122;
+    *pointer = -123;
+    *pointer_const_1 = 124;
 }
 
 static void compare_with_memory_location_value
@@ -240,15 +244,15 @@ static void compare_with_memory_location_value
     int* const pointer_const_1
 )
 {
-    if (-123 <= *pointer) {volatile int x = 0;}
-    if (124 != *pointer_const_0) {volatile int x = 0;}
-    if (*pointer_const_1 == -125) {volatile int x = 0;}
+    if (*pointer == -125) {volatile int x = 0;}
+    if (*pointer_const_0 >= 126) {volatile int x = 0;}
+    if (*pointer_const_1 > -127) {volatile int x = 0;}
 }
 
 static void assign_to_struct_member(outer_struct_t outer_struct)
 {
-    outer_struct.x = 126;
-    outer_struct.inner_struct.x = -127;
+    outer_struct.x = 128;
+    outer_struct.inner_struct.x = -129;
 }
 
 static void compare_with_struct_member_value
@@ -257,10 +261,10 @@ static void compare_with_struct_member_value
     const outer_struct_t outer_struct_const
 )
 {
-    if (outer_struct.x >= 128) {volatile int keep = 0;}
-    if (outer_struct.inner_struct.x > -129) {volatile int x = 0;}
-    if (outer_struct_const.x < 130) {volatile int keep = 0;}
-    if (outer_struct_const.inner_struct.x <= -131) {volatile int x = 0;}
+    if (outer_struct.x < 130) {volatile int keep = 0;}
+    if (outer_struct.inner_struct.x <= -131) {volatile int x = 0;}
+    if (132 != outer_struct_const.x) {volatile int keep = 0;}
+    if (-133 == outer_struct_const.inner_struct.x) {volatile int x = 0;}
 }
 
 static void assign_to_member_of_struct_dereferenced_via_pointer
@@ -269,10 +273,10 @@ static void assign_to_member_of_struct_dereferenced_via_pointer
     outer_struct_t* const outer_struct_ptr_const_1
 )
 {
-    outer_struct_ptr->x = 132;
-    outer_struct_ptr->inner_struct.x = -133;
-    outer_struct_ptr_const_1->x = 134;
-    outer_struct_ptr_const_1->inner_struct.x = -135;
+    outer_struct_ptr->x = 134;
+    outer_struct_ptr->inner_struct.x = -135;
+    outer_struct_ptr_const_1->x = 136;
+    outer_struct_ptr_const_1->inner_struct.x = -137;
 }
 
 static void compare_with_member_value_of_struct_dereferenced_via_pointer
@@ -282,17 +286,17 @@ static void compare_with_member_value_of_struct_dereferenced_via_pointer
     outer_struct_t* const outer_struct_ptr_const_1
 )
 {
-    if (136 != outer_struct_ptr->x) {volatile int keep = 0;}
-    if (-137 == outer_struct_ptr->inner_struct.x) {volatile int x = 0;}
-    if (138 >= outer_struct_ptr_const_0->x) {volatile int keep = 0;}
-    if (-139 > outer_struct_ptr_const_0->inner_struct.x) {volatile int x = 0;}
-    if (140 < outer_struct_ptr_const_1->x) {volatile int keep = 0;}
-    if (outer_struct_ptr_const_1->inner_struct.x <= -141) {volatile int x = 0;}
+    if (138 >= outer_struct_ptr->x) {volatile int keep = 0;}
+    if (-139 > outer_struct_ptr->inner_struct.x) {volatile int x = 0;}
+    if (140 < outer_struct_ptr_const_0->x) {volatile int keep = 0;}
+    if (outer_struct_ptr_const_0->inner_struct.x <= -141) {volatile int x = 0;}
+    if (outer_struct_ptr_const_1->x != 142) {volatile int keep = 0;}
+    if (outer_struct_ptr_const_1->inner_struct.x == -143) {volatile int x = 0;}
 }
 
 static void receive_integer(int a) {}
 
 static int return_integer()
 {
-    return 142;
+    return 144;
 }

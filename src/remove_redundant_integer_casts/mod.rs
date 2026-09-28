@@ -2,8 +2,8 @@ mod analysis;
 mod cast;
 
 use analysis::{
-    collect_function_contexts, collect_function_param_types, collect_global_vars,
-    collect_struct_fields, pat_name,
+    collect_function_contexts, collect_function_param_types, collect_function_return_types,
+    collect_global_vars, collect_struct_fields, pat_name,
 };
 use cast::{
     remove_cast_if_redundant, remove_casts_if_redundant_for_expected_type, type_info_from_ty,
@@ -87,6 +87,7 @@ struct RemoveRedundantIntegerCasts {
     global_vars: HashMap<String, TypeInfo>,
     struct_fields: HashMap<String, HashMap<String, TypeInfo>>,
     function_param_types: HashMap<String, Vec<Option<TypeInfo>>>,
+    function_return_types: HashMap<String, Option<IntegerType>>,
     function_contexts: Vec<(Span, FunctionContext)>,
     local_scopes: Vec<HashMap<String, TypeInfo>>,
     current_return_types: Vec<Option<IntegerType>>,
@@ -184,12 +185,14 @@ fn remove_redundant_integer_casts(krate: &mut Crate, bit_widths: BitWidths) {
     let struct_fields = collect_struct_fields(krate, &bit_widths);
     let global_vars = collect_global_vars(krate, &bit_widths);
     let function_param_types = collect_function_param_types(krate, &bit_widths);
+    let function_return_types = collect_function_return_types(krate);
     let function_contexts = collect_function_contexts(krate, &bit_widths);
     let mut visitor = RemoveRedundantIntegerCasts {
         bit_widths,
         global_vars,
         struct_fields,
         function_param_types,
+        function_return_types,
         function_contexts,
         local_scopes: Vec::new(),
         current_return_types: Vec::new(),
@@ -489,6 +492,21 @@ impl RemoveRedundantIntegerCasts {
                     return self.type_info_for_expr(receiver);
                 }
                 None
+            }
+            ExprKind::Call(ref callee, _) => {
+                let path = match callee.kind {
+                    ExprKind::Path(_, ref path) => path,
+                    _ => return None,
+                };
+                let function_key = resolve_path_in_map(
+                    path,
+                    &self.current_module_path,
+                    &self.function_return_types,
+                )?;
+                match self.function_return_types.get(&function_key) {
+                    Some(Some(return_type)) => Some(TypeInfo::Integer(*return_type)),
+                    _ => None,
+                }
             }
             ExprKind::Paren(ref inner) => self.type_info_for_expr(inner),
             _ => None,

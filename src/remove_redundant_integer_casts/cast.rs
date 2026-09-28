@@ -16,6 +16,10 @@ pub(super) fn remove_cast_if_redundant(
 ) {
     let (inner_expr, cast_ty) = match expr.kind {
         ExprKind::Cast(ref inner_expr, ref cast_ty) => (inner_expr, cast_ty),
+        ExprKind::Paren(ref paren_expr) => match paren_expr.kind {
+            ExprKind::Cast(ref inner_expr, ref cast_ty) => (inner_expr, cast_ty),
+            _ => return,
+        },
         _ => return,
     };
     let cast_type = match integer_type_from_ty(cast_ty) {

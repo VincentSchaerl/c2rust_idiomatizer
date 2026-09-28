@@ -1,5 +1,5 @@
 use super::cast::{integer_type_from_ty, type_info_from_ty};
-use super::{BitWidths, FunctionContext, TypeInfo};
+use super::{BitWidths, FunctionContext, IntegerType, TypeInfo};
 
 use rustc_ast::ptr::P;
 use rustc_ast::{Crate, FnRetTy, Item, ItemKind, ModKind, Pat, PatKind, VariantData};
@@ -140,6 +140,42 @@ fn collect_function_param_types_from_items(
                     module_path,
                     functions,
                 );
+                module_path.pop();
+            }
+            _ => {}
+        }
+    }
+}
+
+pub(super) fn collect_function_return_types(
+    krate: &Crate,
+) -> HashMap<String, Option<IntegerType>> {
+    let mut functions = HashMap::new();
+    let mut module_path = Vec::new();
+    collect_function_return_types_from_items(&krate.items, &mut module_path, &mut functions);
+    functions
+}
+
+fn collect_function_return_types_from_items(
+    items: &[P<Item>],
+    module_path: &mut Vec<String>,
+    functions: &mut HashMap<String, Option<IntegerType>>,
+) {
+    for item in items {
+        match item.kind {
+            ItemKind::Fn(ref func) => {
+                let return_type = match func.sig.decl.output {
+                    FnRetTy::Ty(ref ty) => integer_type_from_ty(ty),
+                    FnRetTy::Default(_) => None,
+                };
+                functions.insert(
+                    qualified_item_name(module_path, &item.ident.name.to_string()),
+                    return_type,
+                );
+            }
+            ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
+                module_path.push(item.ident.name.to_string());
+                collect_function_return_types_from_items(module_items, module_path, functions);
                 module_path.pop();
             }
             _ => {}
