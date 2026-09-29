@@ -8,9 +8,9 @@ use c2rust_refactor::RefactorCtxt;
 use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{
-    BinOpKind, BindingAnnotation, Block, ByRef, Crate, Expr, ExprKind, Item, ItemKind, Label,
-    LitIntType, LitKind, Local, LocalKind, Mutability, Pat, PatKind, Stmt, StmtKind, Ty, TyKind,
-    UnOp,
+    BinOpKind, BindingAnnotation, Block, ByRef, Crate, Expr, ExprKind, FnRetTy, ForeignItemKind,
+    Item, ItemKind, Label, LitIntType, LitKind, Local, LocalKind, Mutability, Pat, PatKind, Stmt,
+    StmtKind, Ty, TyKind, UnOp,
 };
 use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
@@ -343,6 +343,9 @@ struct TypeEnvironment {
     locals: HashMap<HirId, BaseMeta>,
     items: HashMap<DefId, BaseMeta>,
     struct_fields: HashMap<DefId, HashMap<String, TypeInfo>>,
+    // Keep source-level return types so C integer aliases are not lost through
+    // rustc type normalization when classifying function-call X-values.
+    function_return_types: HashMap<DefId, TypeInfo>,
     item_initializers: HashMap<DefId, P<Expr>>,
 
     // A `static` or `const` appearing as a statement inside a block is a
@@ -427,6 +430,13 @@ impl TypeEnvironment {
                 }
             }
             ItemKind::Fn(func) => {
+                if let FnRetTy::Ty(return_ty) = &func.sig.decl.output {
+                    if let Some(type_info) = type_info_from_ty(return_ty, cx) {
+                        env.function_return_types
+                            .insert(cx.node_def_id(item.id), type_info);
+                    }
+                }
+
                 for param in &func.sig.decl.inputs {
                     let (hir_id, mutable) = match simple_binding_hir_id(&param.pat, cx) {
                         Some(value) => value,
@@ -441,6 +451,18 @@ impl TypeEnvironment {
                                 origin: BaseOrigin::Param,
                             },
                         );
+                    }
+                }
+            }
+            ItemKind::ForeignMod(foreign_mod) => {
+                for foreign_item in &foreign_mod.items {
+                    if let ForeignItemKind::Fn(func) = &foreign_item.kind {
+                        if let FnRetTy::Ty(return_ty) = &func.sig.decl.output {
+                            if let Some(type_info) = type_info_from_ty(return_ty, cx) {
+                                env.function_return_types
+                                    .insert(cx.node_def_id(foreign_item.id), type_info);
+                            }
+                        }
                     }
                 }
             }
@@ -547,6 +569,10 @@ impl TypeEnvironment {
                     .and_then(|fields| fields.get(&ident.name.to_string()))
                     .cloned()
             }
+            ExprKind::Call(callee, _) => match cx.try_resolve_expr_hir(callee) {
+                Some(Res::Def(_, id)) => self.function_return_types.get(&id).cloned(),
+                _ => None,
+            },
             ExprKind::MethodCall(segment, receiver, _, _)
                 if segment.ident.name.as_str() == "offset" =>
             {
@@ -988,6 +1014,9 @@ fn is_t_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &Re
         ExprKind::Unary(UnOp::Deref, _) => true,
         ExprKind::Index(..) => true,
         ExprKind::Field(..) => true,
+        // X-value clause (vi): a value returned by a function whose return
+        // type is X. The type equality check above enforces the return type.
+        ExprKind::Call(..) => true,
         _ => false,
     }
 }
