@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "test_idiomatize_loops_base_case.h"
 #include "nested_struct.h"
 
 static int return_int();
@@ -70,7 +71,7 @@ extern outer_struct_t* outer_struct_ptr_global;
 extern const outer_struct_t* outer_struct_ptr_global_const_0;
 static outer_struct_t* outer_struct_ptr_global_static = &outer_struct_global;
 
-void test_idiomatize_loops()
+void test_idiomatize_loops_base_case()
 {
     // T-values
 
@@ -133,8 +134,6 @@ void test_idiomatize_loops()
     intptr_t _intptr_t = 0;
     uintptr_t _uintptr_t = 0;
     size_t _size_t = 0;
-
-    // BASE CASE
 
     // basic form
 
@@ -203,7 +202,8 @@ void test_idiomatize_loops()
     for (int i_46 = outer_struct_global.x; i_46 < 10; i_46++) {volatile int keep = 1; if (keep) break;}
     for (int i_47 = outer_struct_global.inner_struct.x; i_47 < 10; i_47++) {volatile int keep = 1; if (keep) break;}
     for (int i_48 = outer_struct_global_static.x; i_48 < 10; i_48++) {volatile int keep = 1; if (keep) break;}
-    for (int i_49 = outer_struct_global_static.inner_struct.x; i_49 < 10; i_49++) {volatile int keep = 1; if (keep) break;}
+    for (int i_49 = outer_struct_global_static.inner_struct.x; i_49 < 10; i_49++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_50 = outer_struct.x; i_50 < 10; i_50++) {volatile int keep = 1; if (keep) break;}
     for (int i_51 = outer_struct.inner_struct.x; i_51 < 10; i_51++) {volatile int keep = 1; if (keep) break;}
     for (int i_52 = outer_struct_const.x; i_52 < 10; i_52++) {volatile int keep = 1; if (keep) break;}
@@ -212,20 +212,26 @@ void test_idiomatize_loops()
     for (int i_55 = outer_struct_static.inner_struct.x; i_55 < 10; i_55++) {volatile int keep = 1; if (keep) break;}
 
     for (int i_56 = outer_struct_ptr_global->x; i_56 < 10; i_56++) {volatile int keep = 1; if (keep) break;}
-    for (int i_57 = outer_struct_ptr_global->inner_struct.x; i_57 < 10; i_57++) {volatile int keep = 1; if (keep) break;}
+    for (int i_57 = outer_struct_ptr_global->inner_struct.x; i_57 < 10; i_57++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_58 = outer_struct_ptr_global_const_0->x; i_58 < 10; i_58++) {volatile int keep = 1; if (keep) break;}
-    for (int i_59 = outer_struct_ptr_global_const_0->inner_struct.x; i_59 < 10; i_59++) {volatile int keep = 1; if (keep) break;}
-    for (int i_60 = outer_struct_ptr_global_static->x; i_60 < 10; i_60++) {volatile int keep = 1; if (keep) break;}
-    for (int i_61 = outer_struct_ptr_global_static->inner_struct.x; i_61 < 10; i_61++) {volatile int keep = 1; if (keep) break;}
+    for (int i_59 = outer_struct_ptr_global_const_0->inner_struct.x; i_59 < 10; i_59++)
+        {volatile int keep = 1; if (keep) break;}
+    for (int i_60 = outer_struct_ptr_global_static->x; i_60 < 10; i_60++)
+        {volatile int keep = 1; if (keep) break;}
+    for (int i_61 = outer_struct_ptr_global_static->inner_struct.x; i_61 < 10; i_61++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_62 = outer_struct_ptr->x; i_62 < 10; i_62++) {volatile int keep = 1; if (keep) break;}
     for (int i_63 = outer_struct_ptr->inner_struct.x; i_63 < 10; i_63++) {volatile int keep = 1; if (keep) break;}
     for (int i_64 = outer_struct_ptr_const_0->x; i_64 < 10; i_64++) {volatile int keep = 1; if (keep) break;}
-    for (int i_65 = outer_struct_ptr_const_0->inner_struct.x; i_65 < 10; i_65++) {volatile int keep = 1; if (keep) break;}
+    for (int i_65 = outer_struct_ptr_const_0->inner_struct.x; i_65 < 10; i_65++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_66 = outer_struct_ptr_const_1->x; i_66 < 10; i_66++) {volatile int keep = 1; if (keep) break;}
-    for (int i_67 = outer_struct_ptr_const_1->inner_struct.x; i_67 < 10; i_67++) {volatile int keep = 1; if (keep) break;}
+    for (int i_67 = outer_struct_ptr_const_1->inner_struct.x; i_67 < 10; i_67++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_68 = outer_struct_ptr_static->x; i_68 < 10; i_68++) {volatile int keep = 1; if (keep) break;}
-    for (int i_69 = outer_struct_ptr_static->inner_struct.x; i_69 < 10; i_69++) {volatile int keep = 1; if (keep) break;}
-
+    for (int i_69 = outer_struct_ptr_static->inner_struct.x; i_69 < 10; i_69++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_70 = return_int(); i_70 < 10; i_70++) {volatile int keep = 1; if (keep) break;}
 
     receive_t_values_for_l
@@ -304,22 +310,52 @@ void test_idiomatize_loops()
     for (int i_112 = 0; i_112 < stable_array[stable_variable]; i_112++) {volatile int keep = 1; if (keep) break;}
     for (int i_113 = 0; i_113 < stable_array[_size_t]; i_113++) {volatile int keep = 1; if (keep) break;}
     for (int i_114 = 0; i_114 < stable_array[stable_array[0]]; i_114++) {volatile int keep = 1; if (keep) break;}
-    for (int i_115 = 0; i_115 < stable_array[stable_array[stable_variable]]; i_115++) {volatile int keep = 1; if (keep) break;}
-    for (int i_116 = 0; i_116 < stable_array[stable_array[_size_t]]; i_116++) {volatile int keep = 1; if (keep) break;}
-    for (int i_117 = 0; i_117 < stable_array[stable_array[stable_array[0]]]; i_117++) {volatile int keep = 1; if (keep) break;}
-    for (int i_118 = 0; i_118 < stable_array[stable_array[stable_outer_struct.x]]; i_118++) {volatile int keep = 1; if (keep) break;}
-    for (int i_119 = 0; i_119 < stable_array[stable_outer_struct.x]; i_119++) {volatile int keep = 1; if (keep) break;}
+    for (int i_115 = 0; i_115 < stable_array[stable_array[stable_variable]]; i_115++)
+    {
+        volatile int keep = 1;
+        if (keep) break;
+    }
+    for (int i_116 = 0; i_116 < stable_array[stable_array[_size_t]]; i_116++)
+        {volatile int keep = 1; if (keep) break;}
+    for (int i_117 = 0; i_117 < stable_array[stable_array[stable_array[0]]]; i_117++)
+        {volatile int keep = 1; if (keep) break;}
+    for (int i_118 = 0; i_118 < stable_array[stable_array[stable_outer_struct.x]]; i_118++)
+        {volatile int keep = 1; if (keep) break;}
+    for (int i_119 = 0; i_119 < stable_array[stable_outer_struct.x]; i_119++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_120 = 0; i_120 < stable_array_const[0]; i_120++) {volatile int keep = 1; if (keep) break;}
     for (int i_121 = 0; i_121 < stable_array_static[0]; i_121++) {volatile int keep = 1; if (keep) break;}
     for (int i_122 = 0; i_122 < stable_array_2d[0][0]; i_122++) {volatile int keep = 1; if (keep) break;}
-    for (int i_123 = 0; i_123 < stable_array_2d[stable_variable][stable_variable]; i_123++) {volatile int keep = 1; if (keep) break;}
+    for (int i_123 = 0; i_123 < stable_array_2d[stable_variable][stable_variable]; i_123++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_124 = 0; i_124 < stable_array_2d[_size_t][_size_t]; i_124++) {volatile int keep = 1; if (keep) break;}
-    for (int i_125 = 0; i_125 < stable_array_2d[stable_array[0]][stable_array[0]]; i_125++) {volatile int keep = 1; if (keep) break;}
-    for (int i_126 = 0; i_126 < stable_array_2d[stable_array[stable_variable]][stable_array[stable_variable]]; i_126++) {volatile int keep = 1; if (keep) break;}
-    for (int i_127 = 0; i_127 < stable_array_2d[stable_array[_size_t]][stable_array[_size_t]]; i_127++) {volatile int keep = 1; if (keep) break;}
-    for (int i_128 = 0; i_128 < stable_array_2d[stable_array[stable_array[0]]][stable_array[stable_array[0]]]; i_128++) {volatile int keep = 1; if (keep) break;}
-    for (int i_129 = 0; i_129 < stable_array_2d[stable_array[stable_outer_struct.x]][stable_array[stable_outer_struct.x]]; i_129++) {volatile int keep = 1; if (keep) break;}
-    for (int i_130 = 0; i_130 < stable_array_2d[stable_outer_struct.x][stable_outer_struct.x]; i_130++) {volatile int keep = 1; if (keep) break;}
+    for (int i_125 = 0; i_125 < stable_array_2d[stable_array[0]][stable_array[0]]; i_125++)
+        {volatile int keep = 1; if (keep) break;}
+    for
+    (
+        int i_126 = 0;
+        i_126 < stable_array_2d[stable_array[stable_variable]][stable_array[stable_variable]];
+        i_126++
+    )
+        {volatile int keep = 1; if (keep) break;}
+    for (int i_127 = 0; i_127 < stable_array_2d[stable_array[_size_t]][stable_array[_size_t]]; i_127++)
+        {volatile int keep = 1; if (keep) break;}
+    for
+    (
+        int i_128 = 0;
+        i_128 < stable_array_2d[stable_array[stable_array[0]]][stable_array[stable_array[0]]];
+        i_128++
+    )
+        {volatile int keep = 1; if (keep) break;}
+    for
+    (
+        int i_129 = 0;
+        i_129 < stable_array_2d[stable_array[stable_outer_struct.x]][stable_array[stable_outer_struct.x]];
+        i_129++
+    )
+        {volatile int keep = 1; if (keep) break;}
+    for (int i_130 = 0; i_130 < stable_array_2d[stable_outer_struct.x][stable_outer_struct.x]; i_130++)
+        {volatile int keep = 1; if (keep) break;}
     int stable_array_temp_0[10] = {0};
     int stable_array_temp_1[10] = {0};
     for (int i_131 = 0; i_131 < stable_array_temp_0[0]; i_131++) {volatile int keep = 1; if (keep) break;}
@@ -330,13 +366,16 @@ void test_idiomatize_loops()
     for (int i_133 = 0; i_133 < stable_outer_struct.x; i_133++) {volatile int keep = 1; if (keep) break;}
     for (int i_134 = 0; i_134 < stable_outer_struct.inner_struct.x; i_134++) {volatile int keep = 1; if (keep) break;}
     for (int i_135 = 0; i_135 < stable_outer_struct_const.x; i_135++) {volatile int keep = 1; if (keep) break;}
-    for (int i_136 = 0; i_136 < stable_outer_struct_const.inner_struct.x; i_136++) {volatile int keep = 1; if (keep) break;}
+    for (int i_136 = 0; i_136 < stable_outer_struct_const.inner_struct.x; i_136++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_137 = 0; i_137 < stable_outer_struct_static.x; i_137++) {volatile int keep = 1; if (keep) break;}
-    for (int i_138 = 0; i_138 < stable_outer_struct_static.inner_struct.x; i_138++) {volatile int keep = 1; if (keep) break;}
+    for (int i_138 = 0; i_138 < stable_outer_struct_static.inner_struct.x; i_138++)
+        {volatile int keep = 1; if (keep) break;}
     outer_struct_t stable_outer_struct_temp_0 = { 0, { 0 } };
     outer_struct_t stable_outer_struct_temp_1 = { 0, { 0 } };
     for (int i_139 = 0; i_139 < stable_outer_struct_temp_0.x; i_139++) {volatile int keep = 1; if (keep) break;}
-    for (int i_140 = 0; i_140 < stable_outer_struct_temp_1.inner_struct.x; i_140++) {volatile int keep = 1; if (keep) break;}
+    for (int i_140 = 0; i_140 < stable_outer_struct_temp_1.inner_struct.x; i_140++)
+        {volatile int keep = 1; if (keep) break;}
     int* stable_outer_struct_temp_0_ptr = &stable_outer_struct_temp_0.inner_struct.x;
     outer_struct_t* stable_outer_struct_temp_1_ptr = &stable_outer_struct_temp_1;
 
@@ -391,9 +430,12 @@ void test_idiomatize_loops()
     for (int f_7 = 0; f_7 < stable_array[variable]; f_7++) {volatile int keep = 1; if (keep) break;}
     for (int f_8 = 0; f_8 < stable_array[_size_t_temp]; f_8++) {volatile int keep = 1; if (keep) break;}
     for (int f_9 = 0; f_9 < stable_array[stable_array[variable]]; f_9++) {volatile int keep = 1; if (keep) break;}
-    for (int f_10 = 0; f_10 < stable_array[stable_array[_size_t_temp]]; f_10++) {volatile int keep = 1; if (keep) break;}
-    for (int f_11 = 0; f_11 < stable_array[stable_array[stable_array[variable]]]; f_11++) {volatile int keep = 1; if (keep) break;}
-    for (int f_12 = 0; f_12 < stable_array[stable_array[outer_struct.x]]; f_12++) {volatile int keep = 1; if (keep) break;}
+    for (int f_10 = 0; f_10 < stable_array[stable_array[_size_t_temp]]; f_10++)
+        {volatile int keep = 1; if (keep) break;}
+    for (int f_11 = 0; f_11 < stable_array[stable_array[stable_array[variable]]]; f_11++)
+        {volatile int keep = 1; if (keep) break;}
+    for (int f_12 = 0; f_12 < stable_array[stable_array[outer_struct.x]]; f_12++)
+        {volatile int keep = 1; if (keep) break;}
     for (int f_13 = 0; f_13 < stable_array[outer_struct.x]; f_13++) {volatile int keep = 1; if (keep) break;}
     int array_temp_0[10] = {0};
     int array_temp_1[10] = {0};
@@ -685,7 +727,7 @@ void test_idiomatize_loops()
 
     // END
 
-    printf("End of test_idiomatize_loops().\n");
+    printf("End of test_idiomatize_loops_base_case().\n");
 }
 
 static int return_int()
@@ -756,9 +798,11 @@ static void receive_t_values_for_l
     for (int i_282 = outer_struct_ptr->x; i_282 < 10; i_282++) {volatile int keep = 1; if (keep) break;}
     for (int i_283 = outer_struct_ptr->inner_struct.x; i_283 < 10; i_283++) {volatile int keep = 1; if (keep) break;}
     for (int i_284 = outer_struct_ptr_const_0->x; i_284 < 10; i_284++) {volatile int keep = 1; if (keep) break;}
-    for (int i_285 = outer_struct_ptr_const_0->inner_struct.x; i_285 < 10; i_285++) {volatile int keep = 1; if (keep) break;}
+    for (int i_285 = outer_struct_ptr_const_0->inner_struct.x; i_285 < 10; i_285++)
+        {volatile int keep = 1; if (keep) break;}
     for (int i_286 = outer_struct_ptr_const_1->x; i_286 < 10; i_286++) {volatile int keep = 1; if (keep) break;}
-    for (int i_287 = outer_struct_ptr_const_1->inner_struct.x; i_287 < 10; i_287++) {volatile int keep = 1; if (keep) break;}
+    for (int i_287 = outer_struct_ptr_const_1->inner_struct.x; i_287 < 10; i_287++)
+        {volatile int keep = 1; if (keep) break;}
 }
 
 static void receive_stable_t_values_for_n
@@ -774,7 +818,8 @@ static void receive_stable_t_values_for_n
     for (int i_290 = 0; i_290 < stable_outer_struct.x; i_290++) {volatile int keep = 1; if (keep) break;}
     for (int i_291 = 0; i_291 < stable_outer_struct.inner_struct.x; i_291++) {volatile int keep = 1; if (keep) break;}
     for (int i_292 = 0; i_292 < stable_outer_struct_const.x; i_292++) {volatile int keep = 1; if (keep) break;}
-    for (int i_293 = 0; i_293 < stable_outer_struct_const.inner_struct.x; i_293++) {volatile int keep = 1; if (keep) break;}
+    for (int i_293 = 0; i_293 < stable_outer_struct_const.inner_struct.x; i_293++)
+        {volatile int keep = 1; if (keep) break;}
 
     int* stable_variable_ptr = &stable_variable;
     for (int f_62 = 0; f_62 < stable_variable; f_62++) {volatile int keep = 1; if (keep) break;}
@@ -797,5 +842,6 @@ static void receive_statically_determinable_t_values_for_n
     stable_outer_struct.inner_struct.x = 0;
     for (int i_294 = 0; i_294  > stable_variable; i_294 --) {volatile int keep = 1; if (keep) break;}
     for (int i_295 = 0; stable_outer_struct.x < i_295; i_295 --) {volatile int keep = 1; if (keep) break;}
-    for (int i_296 = 0; i_296 > stable_outer_struct.inner_struct.x; i_296 --) {volatile int keep = 1; if (keep) break;}
+    for (int i_296 = 0; i_296 > stable_outer_struct.inner_struct.x; i_296 --)
+        {volatile int keep = 1; if (keep) break;}
 }

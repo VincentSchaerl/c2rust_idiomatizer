@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "test_replace_integer_types.h"
+
 void test_replace_integer_types()
 {
     signed char _signed_char = 0;

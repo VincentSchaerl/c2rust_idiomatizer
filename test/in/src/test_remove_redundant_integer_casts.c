@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "test_remove_redundant_integer_casts.h"
 #include "nested_struct.h"
 
 static void keep_variable_global_const(int variable_global_const);
