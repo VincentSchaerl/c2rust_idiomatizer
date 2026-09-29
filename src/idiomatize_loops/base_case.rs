@@ -2063,6 +2063,12 @@ impl<'tcx> Delegate<'tcx> for InductionDelegate<'tcx> {
         // the AST level below.
     }
 
+    fn copy(&mut self, _place: &PlaceWithHirId<'tcx>, _diag_expr_id: HirId) {
+        // Reading a Copy value such as an integer induction variable is allowed
+        // by Constraint 7.  Delegate::copy defaults to borrow(Immutable), which
+        // would otherwise make ordinary reads look like forbidden borrows.
+    }
+
     fn borrow(
         &mut self,
         place: &PlaceWithHirId<'tcx>,
