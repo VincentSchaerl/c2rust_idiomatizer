@@ -484,71 +484,71 @@ void test_idiomatize_loops()
 
     for (int i_164 = 0; i_164 < 10; i_164 += 1) {volatile int keep = 1; if (keep) break;}
     for (int i_165 = 0; i_165 <= 10; i_165 += 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_166 = 0; 10 > i_166; i_166 += 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_167 = 0; 10 >= i_167; i_167 += 1) {volatile int keep = 1; if (keep) break;}
+    for (int i_166 = 0; 10 > i_166; i_166 += 2) {volatile int keep = 1; if (keep) break;}
+    for (int i_167 = 0; 10 >= i_167; i_167 += 2) {volatile int keep = 1; if (keep) break;}
 
     for (int f_33 = 0; 10 < f_33; f_33 += 1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_168 = 0; i_168 > 10; i_168 -= 1) {volatile int keep = 1; if (keep) break;}
     for (int i_169 = 0; i_169 >= 10; i_169 -= 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_170 = 0; 10 < i_170; i_170 -= 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_171 = 0; 10 <= i_171; i_171 -= 1) {volatile int keep = 1; if (keep) break;}
+    for (int i_170 = 0; 10 < i_170; i_170 -= 2) {volatile int keep = 1; if (keep) break;}
+    for (int i_171 = 0; 10 <= i_171; i_171 -= 2) {volatile int keep = 1; if (keep) break;}
 
     for (int f_34 = 0; 10 > f_34; f_34 -= 1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_172 = 0; i_172 > 10; i_172 += -1) {volatile int keep = 1; if (keep) break;}
     for (int i_173 = 0; i_173 >= 10; i_173 += -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_174 = 0; 10 < i_174; i_174 += -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_175 = 0; 10 <= i_175; i_175 += -1) {volatile int keep = 1; if (keep) break;}
+    for (int i_174 = 0; 10 < i_174; i_174 += -2) {volatile int keep = 1; if (keep) break;}
+    for (int i_175 = 0; 10 <= i_175; i_175 += -2) {volatile int keep = 1; if (keep) break;}
 
-    for (int f_35 = 0; 10 >= f_35; f_35 += -1) {volatile int keep = 1; if (keep) break;}
+    for (int f_35 = 0; 10 >= f_35; f_35 += -2) {volatile int keep = 1; if (keep) break;}
 
     for (int i_176 = 0; i_176 < 10; i_176 -= -1) {volatile int keep = 1; if (keep) break;}
     for (int i_177 = 0; i_177 <= 10; i_177 -= -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_178 = 0; 10 > i_178; i_178 -= -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_179 = 0; 10 >= i_179; i_179 -= -1) {volatile int keep = 1; if (keep) break;}
+    for (int i_178 = 0; 10 > i_178; i_178 -= -2) {volatile int keep = 1; if (keep) break;}
+    for (int i_179 = 0; 10 >= i_179; i_179 -= -2) {volatile int keep = 1; if (keep) break;}
 
-    for (int f_36 = 0; 10 <= f_36; f_36 -= -1) {volatile int keep = 1; if (keep) break;}
+    for (int f_36 = 0; 10 <= f_36; f_36 -= -2) {volatile int keep = 1; if (keep) break;}
 
     for (int i_180 = 0; i_180 < 10; i_180 = i_180 + 1) {volatile int keep = 1; if (keep) break;}
     for (int i_181 = 0; i_181 <= 10; i_181 = i_181 + 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_182 = 0; 10 > i_182; i_182 = i_182 + 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_183 = 0; 10 >= i_183; i_183 = i_183 + 1) {volatile int keep = 1; if (keep) break;}
+    for (int i_182 = 0; 10 > i_182; i_182 = i_182 + 2) {volatile int keep = 1; if (keep) break;}
+    for (int i_183 = 0; 10 >= i_183; i_183 = i_183 + 2) {volatile int keep = 1; if (keep) break;}
 
     for (int f_37 = 0; 10 < f_37; f_37 = f_37 + 1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_184 = 0; i_184 > 10; i_184 = i_184 - 1) {volatile int keep = 1; if (keep) break;}
     for (int i_185 = 0; i_185 >= 10; i_185 = i_185 - 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_186 = 0; 10 < i_186; i_186 = i_186 - 1) {volatile int keep = 1; if (keep) break;}
-    for (int i_187 = 0; 10 <= i_187; i_187 = i_187 - 1) {volatile int keep = 1; if (keep) break;}
+    for (int i_186 = 0; 10 < i_186; i_186 = i_186 - 2) {volatile int keep = 1; if (keep) break;}
+    for (int i_187 = 0; 10 <= i_187; i_187 = i_187 - 2) {volatile int keep = 1; if (keep) break;}
 
     for (int f_38 = 0; 10 > f_38; f_38 = f_38 - 1) {volatile int keep = 1; if (keep) break;}
 
     for (int i_188 = 0; i_188 > 10; i_188 = i_188 + -1) {volatile int keep = 1; if (keep) break;}
     for (int i_189 = 0; i_189 >= 10; i_189 = i_189 + -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_190 = 0; 10 < i_190; i_190 = i_190 + -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_191 = 0; 10 <= i_191; i_191 = i_191 + -1) {volatile int keep = 1; if (keep) break;}
+    for (int i_190 = 0; 10 < i_190; i_190 = i_190 + -2) {volatile int keep = 1; if (keep) break;}
+    for (int i_191 = 0; 10 <= i_191; i_191 = i_191 + -2) {volatile int keep = 1; if (keep) break;}
 
-    for (int f_39 = 0; 10 >= f_39; f_39 = f_39 + -1) {volatile int keep = 1; if (keep) break;}
+    for (int f_39 = 0; 10 >= f_39; f_39 = f_39 + -2) {volatile int keep = 1; if (keep) break;}
 
     for (int i_192 = 0; i_192 < 10; i_192 = i_192 - -1) {volatile int keep = 1; if (keep) break;}
     for (int i_193 = 0; i_193 <= 10; i_193 = i_193 - -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_194 = 0; 10 > i_194; i_194 = i_194 - -1) {volatile int keep = 1; if (keep) break;}
-    for (int i_195 = 0; 10 >= i_195; i_195 = i_195 - -1) {volatile int keep = 1; if (keep) break;}
+    for (int i_194 = 0; 10 > i_194; i_194 = i_194 - -2) {volatile int keep = 1; if (keep) break;}
+    for (int i_195 = 0; 10 >= i_195; i_195 = i_195 - -2) {volatile int keep = 1; if (keep) break;}
 
-    for (int f_40 = 0; 10 <= f_40; f_40 = f_40 - -1) {volatile int keep = 1; if (keep) break;}
+    for (int f_40 = 0; 10 <= f_40; f_40 = f_40 - -2) {volatile int keep = 1; if (keep) break;}
 
     for (int i_196 = 0; i_196 < 10; i_196 = 1 + i_196) {volatile int keep = 1; if (keep) break;}
     for (int i_197 = 0; i_197 <= 10; i_197 = 1 + i_197) {volatile int keep = 1; if (keep) break;}
-    for (int i_198 = 0; 10 > i_198; i_198 = 1 + i_198) {volatile int keep = 1; if (keep) break;}
-    for (int i_199 = 0; 10 >= i_199; i_199 = 1 + i_199) {volatile int keep = 1; if (keep) break;}
+    for (int i_198 = 0; 10 > i_198; i_198 = 2 + i_198) {volatile int keep = 1; if (keep) break;}
+    for (int i_199 = 0; 10 >= i_199; i_199 = 2 + i_199) {volatile int keep = 1; if (keep) break;}
 
     for (int f_41 = 0; 10 < f_41; f_41 = 1 + f_41) {volatile int keep = 1; if (keep) break;}
 
     for (int i_200 = 0; i_200 > 10; i_200 = -1 + i_200) {volatile int keep = 1; if (keep) break;}
     for (int i_201 = 0; i_201 >= 10; i_201 = -1 + i_201) {volatile int keep = 1; if (keep) break;}
-    for (int i_202 = 0; 10 < i_202; i_202 = -1 + i_202) {volatile int keep = 1; if (keep) break;}
-    for (int i_203 = 0; 10 <= i_203; i_203 = -1 + i_203) {volatile int keep = 1; if (keep) break;}
+    for (int i_202 = 0; 10 < i_202; i_202 = -2 + i_202) {volatile int keep = 1; if (keep) break;}
+    for (int i_203 = 0; 10 <= i_203; i_203 = -2 + i_203) {volatile int keep = 1; if (keep) break;}
 
     for (int f_42 = 0; 10 > f_42; f_42 = -1 + f_42) {volatile int keep = 1; if (keep) break;}
 
@@ -568,36 +568,36 @@ void test_idiomatize_loops()
 
     for (unsigned int i_212 = 0; i_212 < 10; i_212 += 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_213 = 0; i_213 <= 10; i_213 += 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_214 = 0; 10 > i_214; i_214 += 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_215 = 0; 10 >= i_215; i_215 += 1) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_214 = 0; 10 > i_214; i_214 += 2) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_215 = 0; 10 >= i_215; i_215 += 2) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int f_45 = 0; 10 < f_45; f_45 += 1) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int i_216 = 0; i_216 > 10; i_216 -= 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_217 = 0; i_217 >= 10; i_217 -= 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_218 = 0; 10 < i_218; i_218 -= 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_219 = 0; 10 <= i_219; i_219 -= 1) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_218 = 0; 10 < i_218; i_218 -= 2) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_219 = 0; 10 <= i_219; i_219 -= 2) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int f_46 = 0; 10 > f_46; f_46 -= 1) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int i_220 = 0; i_220 < 10; i_220 = i_220 + 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_221 = 0; i_221 <= 10; i_221 = i_221 + 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_222 = 0; 10 > i_222; i_222 = i_222 + 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_223 = 0; 10 >= i_223; i_223 = i_223 + 1) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_222 = 0; 10 > i_222; i_222 = i_222 + 2) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_223 = 0; 10 >= i_223; i_223 = i_223 + 2) {volatile int keep = 1; if (keep) break;}
 
-    for (unsigned int f_47 = 0; 10 <= f_47; f_47 = f_47 + 1) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int f_47 = 0; 10 <= f_47; f_47 = f_47 + 2) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int i_224 = 0; i_224 > 10; i_224 = i_224 - 1) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_225 = 0; i_225 >= 10; i_225 = i_225 - 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_226 = 0; 10 < i_226; i_226 = i_226 - 1) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_227 = 0; 10 <= i_227; i_227 = i_227 - 1) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_226 = 0; 10 < i_226; i_226 = i_226 - 2) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_227 = 0; 10 <= i_227; i_227 = i_227 - 2) {volatile int keep = 1; if (keep) break;}
 
-    for (unsigned int f_48 = 0; 10 >= f_48; f_48 = f_48 - 1) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int f_48 = 0; 10 >= f_48; f_48 = f_48 - 2) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int i_228 = 0; i_228 < 10; i_228 = 1 + i_228) {volatile int keep = 1; if (keep) break;}
     for (unsigned int i_229 = 0; i_229 <= 10; i_229 = 1 + i_229) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_230 = 0; 10 > i_230; i_230 = 1 + i_230) {volatile int keep = 1; if (keep) break;}
-    for (unsigned int i_231 = 0; 10 >= i_231; i_231 = 1 + i_231) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_230 = 0; 10 > i_230; i_230 = 2 + i_230) {volatile int keep = 1; if (keep) break;}
+    for (unsigned int i_231 = 0; 10 >= i_231; i_231 = 2 + i_231) {volatile int keep = 1; if (keep) break;}
 
     for (unsigned int f_49 = 0; 10 < f_49; f_49 = 1 + f_49) {volatile int keep = 1; if (keep) break;}
 
@@ -648,7 +648,7 @@ void test_idiomatize_loops()
 
     for (int f_56 = 0; 10 >= f_56; f_56 = f_56 - stable_variable) {volatile int keep = 1; if (keep) break;}
 
-    _int8_t = -1;
+    _int8_t = -2;
     for (int i_256 = 0; i_256 > 10; i_256 = i_256 + _int8_t) {volatile int keep = 1; if (keep) break;}
     for (int i_257 = 0; i_257 >= 10; i_257 = i_257 + _int8_t) {volatile int keep = 1; if (keep) break;}
     for (int i_258 = 0; 10 < i_258; i_258 = i_258 + _int8_t) {volatile int keep = 1; if (keep) break;}
@@ -663,7 +663,7 @@ void test_idiomatize_loops()
 
     for (int f_58 = 0; 10 < f_58; f_58 = f_58 - _int8_t) {volatile int keep = 1; if (keep) break;}
 
-    _int16_t = 1;
+    _int16_t = 2;
     for (int i_264 = 0; i_264 < 10; i_264 = _int16_t + i_264) {volatile int keep = 1; if (keep) break;}
     for (int i_265 = 0; i_265 <= 10; i_265 = _int16_t + i_265) {volatile int keep = 1; if (keep) break;}
     for (int i_266 = 0; 10 > i_266; i_266 = _int16_t + i_266) {volatile int keep = 1; if (keep) break;}
@@ -671,7 +671,7 @@ void test_idiomatize_loops()
 
     for (int f_59 = 0; 10 < f_59; f_59 = _int16_t + f_59) {volatile int keep = 1; if (keep) break;}
 
-    _int16_t = -1;
+    _int16_t = -2;
     for (int i_268 = 0; i_268 > 10; i_268 = _int16_t + i_268) {volatile int keep = 1; if (keep) break;}
     for (int i_269 = 0; i_269 >= 10; i_269 = _int16_t + i_269) {volatile int keep = 1; if (keep) break;}
     for (int i_270 = 0; 10 < i_270; i_270 = _int16_t + i_270) {volatile int keep = 1; if (keep) break;}

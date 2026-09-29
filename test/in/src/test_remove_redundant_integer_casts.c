@@ -132,7 +132,7 @@ void test_remove_redundant_integer_casts()
     // Comparison with the value of an element of an array
     if (array_global[0] != -75) {volatile int keep = 0;}
     if (76 == array_global_static[0]) {volatile int keep = 0;}
-    if (-77 >= array_global[i] <= 78) {volatile int keep = 0;}
+    if (-77 >= array_global[i]) {volatile int keep = 0;}
     if (78 > array_global_static[i]) {volatile int keep = 0;}
     if (-79 < array_2d_global[0][0]) {volatile int keep = 0;}
     if (80 <= array_2d_global[i][i]) {volatile int keep = 0;}
