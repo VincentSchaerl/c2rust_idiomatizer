@@ -318,6 +318,9 @@ enum IntegerType {
 #[derive(Clone, Debug)]
 enum TypeInfo {
     Integer(IntegerType),
+    // Preserve source-level type aliases so clause 2.b.vii can distinguish
+    // TYPE_ALIAS-values while still recovering the underlying X type.
+    Alias(Box<TypeInfo>),
     Struct(DefId),
     Pointer(Box<TypeInfo>),
     Array(Box<TypeInfo>),
@@ -343,17 +346,19 @@ struct TypeEnvironment {
     locals: HashMap<HirId, BaseMeta>,
     items: HashMap<DefId, BaseMeta>,
     struct_fields: HashMap<DefId, HashMap<String, TypeInfo>>,
-    // Keep source-level return types so C integer aliases are not lost through
-    // rustc type normalization when classifying function-call X-values.
+    // Source-level type aliases are resolved recursively. Keeping their AST
+    // targets avoids losing distinctions such as an alias for
+    // `::core::ffi::c_int` through rustc type normalization.
+    type_aliases: HashMap<DefId, P<Ty>>,
+    // Keep source-level return types so C integer type distinctions are not lost
+    // through rustc type normalization when classifying function-call X-values.
     function_return_types: HashMap<DefId, TypeInfo>,
     item_initializers: HashMap<DefId, P<Expr>>,
 
     // A `static` or `const` appearing as a statement inside a block is a
-    // function-local item. This distinction matters for stable X-values
-    // that are array elements or struct fields: constraints 4.b.ix / 4.b.xiv
-    // permit a mutable container defined
-    // inside the function when the no-reference/no-modification conditions are
-    // proven, while a mutable global item is not accepted.
+    // function-local item. Keep this distinction for the statically
+    // determinable X-value analysis, where global items and direct
+    // function-local declarations are handled differently.
     local_item_ids: HashSet<DefId>,
 
     // Syntactic/rustc-adjustment evidence used by the stability proof.  We do
@@ -375,6 +380,19 @@ impl TypeEnvironment {
     fn collect(krate: &Crate, cx: &RefactorCtxt) -> Self {
         let mut env = TypeEnvironment::default();
 
+        // Collect type aliases first so all later source-level type collection
+        // can preserve aliases and recursively resolve their underlying type.
+        // In this rustc_ast version ItemKind::TyAlias contains one TyAlias
+        // object whose `ty` field holds the optional target type.
+        visit_nodes(krate, |item: &Item| {
+            if let ItemKind::TyAlias(alias) = &item.kind {
+                if let Some(alias_ty) = &alias.ty {
+                    env.type_aliases
+                        .insert(cx.node_def_id(item.id), alias_ty.clone());
+                }
+            }
+        });
+
         // Mark item statements (most importantly function-local `static`s).
         // Module/global items are not block statements and therefore are not
         // inserted here.
@@ -391,7 +409,9 @@ impl TypeEnvironment {
                 let mut fields = HashMap::new();
                 for field in variant_data.fields() {
                     if let Some(ident) = field.ident {
-                        if let Some(type_info) = type_info_from_ty(&field.ty, cx) {
+                        if let Some(type_info) =
+                            type_info_from_ty(&field.ty, cx, &env.type_aliases)
+                        {
                             fields.insert(ident.name.to_string(), type_info);
                         }
                     }
@@ -403,7 +423,7 @@ impl TypeEnvironment {
                 if let Some(init) = init {
                     env.item_initializers.insert(item_id, init.clone());
                 }
-                if let Some(type_info) = type_info_from_ty(ty, cx) {
+                if let Some(type_info) = type_info_from_ty(ty, cx, &env.type_aliases) {
                     env.items.insert(
                         item_id,
                         BaseMeta {
@@ -419,7 +439,7 @@ impl TypeEnvironment {
                 if let Some(init) = init {
                     env.item_initializers.insert(item_id, init.clone());
                 }
-                if let Some(type_info) = type_info_from_ty(ty, cx) {
+                if let Some(type_info) = type_info_from_ty(ty, cx, &env.type_aliases) {
                     env.items.insert(
                         item_id,
                         BaseMeta {
@@ -432,7 +452,9 @@ impl TypeEnvironment {
             }
             ItemKind::Fn(func) => {
                 if let FnRetTy::Ty(return_ty) = &func.sig.decl.output {
-                    if let Some(type_info) = type_info_from_ty(return_ty, cx) {
+                    if let Some(type_info) =
+                        type_info_from_ty(return_ty, cx, &env.type_aliases)
+                    {
                         env.function_return_types
                             .insert(cx.node_def_id(item.id), type_info);
                     }
@@ -443,7 +465,9 @@ impl TypeEnvironment {
                         Some(value) => value,
                         None => continue,
                     };
-                    if let Some(type_info) = type_info_from_ty(&param.ty, cx) {
+                    if let Some(type_info) =
+                        type_info_from_ty(&param.ty, cx, &env.type_aliases)
+                    {
                         env.locals.insert(
                             hir_id,
                             BaseMeta {
@@ -459,7 +483,9 @@ impl TypeEnvironment {
                 for foreign_item in &foreign_mod.items {
                     if let ForeignItemKind::Fn(func) = &foreign_item.kind {
                         if let FnRetTy::Ty(return_ty) = &func.sig.decl.output {
-                            if let Some(type_info) = type_info_from_ty(return_ty, cx) {
+                            if let Some(type_info) =
+                                type_info_from_ty(return_ty, cx, &env.type_aliases)
+                            {
                                 env.function_return_types
                                     .insert(cx.node_def_id(foreign_item.id), type_info);
                             }
@@ -478,7 +504,7 @@ impl TypeEnvironment {
             let type_info = local
                 .ty
                 .as_ref()
-                .and_then(|ty| type_info_from_ty(ty, cx))
+                .and_then(|ty| type_info_from_ty(ty, cx, &env.type_aliases))
                 .or_else(|| cx.opt_node_type(local.pat.id).and_then(type_info_from_rustc_ty));
             if let Some(type_info) = type_info {
                 env.locals.insert(
@@ -542,9 +568,10 @@ impl TypeEnvironment {
 
     fn type_info_for_expr(&self, expr: &Expr, cx: &RefactorCtxt) -> Option<TypeInfo> {
         // Prefer the source-level environment because it preserves C integer
-        // aliases when they are still present.  Fall back to rustc's typeck
-        // result for expressions whose defining item is not represented by an
-        // AST Item in this crate, most importantly `extern { static ... }`
+        // type distinctions and user-defined aliases when they are still
+        // present. Fall back to rustc's typeck result for expressions whose
+        // defining item is not represented by an AST Item in this crate, most
+        // importantly `extern { static ... }`
         // declarations produced by C2Rust.
         let structural = match &expr.kind {
             ExprKind::Path(..) => match cx.try_resolve_expr_hir(expr) {
@@ -606,21 +633,41 @@ fn induction_binding(pat: &Pat, cx: &RefactorCtxt) -> Option<HirId> {
     }
 }
 
-fn type_info_from_ty(ty: &Ty, cx: &RefactorCtxt) -> Option<TypeInfo> {
+fn type_info_from_ty(
+    ty: &Ty,
+    cx: &RefactorCtxt,
+    type_aliases: &HashMap<DefId, P<Ty>>,
+) -> Option<TypeInfo> {
     if let Some(integer) = integer_type_from_ty(ty) {
         return Some(TypeInfo::Integer(integer));
     }
 
     match &ty.kind {
-        TyKind::Path(None, _) => cx.try_resolve_ty(ty).map(TypeInfo::Struct),
+        TyKind::Path(None, _) => {
+            let id = cx.try_resolve_ty(ty)?;
+            if let Some(alias_ty) = type_aliases.get(&id) {
+                let underlying = type_info_from_ty(alias_ty, cx, type_aliases)?;
+                Some(TypeInfo::Alias(Box::new(underlying)))
+            } else {
+                Some(TypeInfo::Struct(id))
+            }
+        }
         TyKind::Ptr(mut_ty) => {
-            let inner = type_info_from_ty(&mut_ty.ty, cx)?;
+            let inner = type_info_from_ty(&mut_ty.ty, cx, type_aliases)?;
             Some(TypeInfo::Pointer(Box::new(inner)))
         }
         TyKind::Array(element, _) => {
-            let inner = type_info_from_ty(element, cx)?;
+            let inner = type_info_from_ty(element, cx, type_aliases)?;
             Some(TypeInfo::Array(Box::new(inner)))
         }
+        _ => None,
+    }
+}
+
+fn underlying_integer_type(type_info: &TypeInfo) -> Option<IntegerType> {
+    match type_info {
+        TypeInfo::Integer(integer) => Some(*integer),
+        TypeInfo::Alias(inner) => underlying_integer_type(inner),
         _ => None,
     }
 }
@@ -1003,9 +1050,13 @@ fn collect_stability_syntax_facts(
 }
 
 fn is_x_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt) -> bool {
-    let actual = match env.type_info_for_expr(expr, cx) {
-        Some(TypeInfo::Integer(integer)) => integer,
-        _ => return false,
+    let type_info = match env.type_info_for_expr(expr, cx) {
+        Some(type_info) => type_info,
+        None => return false,
+    };
+    let actual = match underlying_integer_type(&type_info) {
+        Some(integer) => integer,
+        None => return false,
     };
     if actual != expected {
         return false;
@@ -1019,6 +1070,10 @@ fn is_x_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &Re
         // X-value clause (vi): a value returned by a function whose return
         // type is X. The type equality check above enforces the return type.
         ExprKind::Call(..) => true,
+        // Clause (vii) does not require a new expression shape. A
+        // TYPE_ALIAS-value has one of the X-value shapes above, but its
+        // source-level type is an alias for X. TypeInfo::Alias is recursively
+        // unwrapped by underlying_integer_type above.
         _ => false,
     }
 }
@@ -1031,10 +1086,11 @@ fn stable_x_value(
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> Option<StableXValue> {
-    let value_type = match env.type_info_for_expr(expr, cx)? {
-        TypeInfo::Integer(integer) => integer,
-        _ => return None,
-    };
+    // Stable X-values may themselves have a source-level type alias for X.
+    // Resolve aliases here just as is_x_value() does, while preserving the
+    // source-level Alias(...) wrapper elsewhere in TypeInfo.
+    let type_info = env.type_info_for_expr(expr, cx)?;
+    let value_type = underlying_integer_type(&type_info)?;
     let place = stable_place_key(
         expr,
         while_span,
@@ -1060,7 +1116,9 @@ fn stable_x_value(
             .all(|projection| matches!(projection, PlaceProjection::Field(_)));
 
     if is_plain_value {
-        if !matches!(base_meta.type_info, TypeInfo::Integer(_)) {
+        // A plain stable value can be declared through a type alias for the
+        // underlying primitive integer type as well.
+        if underlying_integer_type(&base_meta.type_info).is_none() {
             return None;
         }
     } else if is_array_element {
@@ -1079,21 +1137,15 @@ fn stable_x_value(
     }
 
     // Whether the candidate needs the dynamic "no reference / not modified"
-    // proof. Immutable/const cases are accepted directly;
-    // mutable locals/parameters and mutable function-local array/struct
-    // statics are permitted only through the corresponding dynamic clauses.
+    // proof. Immutable/const items are accepted directly. Mutable ordinary
+    // locals/parameters may be accepted through the corresponding dynamic
+    // clauses, but mutable `static` items are never accepted, even when they
+    // are defined inside the function (constraints 4.b.ix / 4.b.xiv require
+    // the containing array/struct instance to be non-static).
     let needs_dynamic_proof = match place.base {
-        BaseKey::Item(id) => match base_meta.origin {
+        BaseKey::Item(_) => match base_meta.origin {
             BaseOrigin::Const => false,
             BaseOrigin::Static if !base_meta.mutable => false,
-            BaseOrigin::Static
-                if base_meta.mutable
-                    && env.item_is_defined_inside_function(id)
-                    && (is_array_element || is_struct_field) =>
-            {
-                // Constraints 4.b.ix / 4.b.xiv.
-                true
-            }
             _ => return None,
         },
         BaseKey::Local(_) => match base_meta.origin {
@@ -1117,8 +1169,8 @@ fn stable_x_value(
             return None;
         }
 
-        // This AST-level check also works for function-local `static mut`
-        // containers, whose base is an Item rather than a Local.
+        // Reject direct or indirect modification of the stable value (or of
+        // its containing local array/struct instance) during the loop.
         if env.base_modified_during_loop(place.base, while_span) {
             return None;
         }
@@ -1169,10 +1221,8 @@ fn classify_start(
         if integer_type_from_ty(cast_ty) != Some(induction_ty) {
             return None;
         }
-        let source_ty = match env.type_info_for_expr(inner, cx)? {
-            TypeInfo::Integer(integer) => integer,
-            _ => return None,
-        };
+        let source_type_info = env.type_info_for_expr(inner, cx)?;
+        let source_ty = underlying_integer_type(&source_type_info)?;
         if source_ty == induction_ty || !is_x_value(inner, source_ty, env, cx) {
             return None;
         }
