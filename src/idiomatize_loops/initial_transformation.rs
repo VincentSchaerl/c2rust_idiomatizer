@@ -1091,6 +1091,14 @@ fn stable_x_value(
     // source-level Alias(...) wrapper elsewhere in TypeInfo.
     let type_info = env.type_info_for_expr(expr, cx)?;
     let value_type = underlying_integer_type(&type_info)?;
+
+    // By definition, every stable X-value is an X-value. Enforce that
+    // relationship explicitly before checking the additional stability
+    // requirements below.
+    if !is_x_value(expr, value_type, env, cx) {
+        return None;
+    }
+
     let place = stable_place_key(
         expr,
         while_span,
