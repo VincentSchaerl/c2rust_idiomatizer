@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "test_idiomatize_loops_base_case.h"
+#include "test_idiomatize_loops_initial_transformation.h"
 #include "nested_struct.h"
 
 static int return_int();
@@ -71,7 +71,7 @@ extern outer_struct_t* outer_struct_ptr_global;
 extern const outer_struct_t* outer_struct_ptr_global_const_0;
 static outer_struct_t* outer_struct_ptr_global_static = &outer_struct_global;
 
-void test_idiomatize_loops_base_case()
+void test_idiomatize_loops_initial_transformation()
 {
     // T-values
 
@@ -727,7 +727,7 @@ void test_idiomatize_loops_base_case()
 
     // END
 
-    printf("End of test_idiomatize_loops_base_case().\n");
+    printf("End of test_idiomatize_loops_initial_transformation().\n");
 }
 
 static int return_int()

@@ -24,7 +24,7 @@ use rustc_span::{symbol::Symbol, Span};
 
 use std::collections::{HashMap, HashSet};
 
-pub(super) fn base_case(
+pub(super) fn initial_transformation(
     st: &CommandState,
     cx: &RefactorCtxt,
     target: TargetInfo,
@@ -349,8 +349,9 @@ struct TypeEnvironment {
     item_initializers: HashMap<DefId, P<Expr>>,
 
     // A `static` or `const` appearing as a statement inside a block is a
-    // function-local item.  This distinction matters for stable array/struct
-    // values: constraints 4.b.ix / 4.b.xiv permit a mutable container defined
+    // function-local item. This distinction matters for stable X-values
+    // that are array elements or struct fields: constraints 4.b.ix / 4.b.xiv
+    // permit a mutable container defined
     // inside the function when the no-reference/no-modification conditions are
     // proven, while a mutable global item is not accepted.
     local_item_ids: HashSet<DefId>,
@@ -365,7 +366,7 @@ struct TypeEnvironment {
 
     // For `ref`/`ref mut` patterns we deliberately keep a conservative
     // function-wide guard. If such syntax occurs before or during a candidate
-    // loop, mutable stable values are rejected unless a more precise
+    // loop, mutable stable X-values are rejected unless a more precise
     // pattern-to-base analysis is added later.
     by_ref_pattern_spans: Vec<Span>,
 }
@@ -706,7 +707,7 @@ fn integer_type_from_ty(ty: &Ty) -> Option<IntegerType> {
 }
 
 // -----------------------------------------------------------------------------
-// T-values and stable values
+// X-values and stable X-values
 // -----------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -723,8 +724,8 @@ enum PlaceProjection {
     Index(IntValue),
 
     // Stable array indices whose value is not required to be known are enough
-    // for the stable-value definition, but not for the later statically
-    // determinable-value definition.
+    // for the stable X-value definition, but not for the later statically
+    // determinable X-value definition.
     StableIndex,
 
     Field(String),
@@ -737,7 +738,7 @@ struct PlaceKey {
 }
 
 #[derive(Clone, Debug)]
-struct StableValue {
+struct StableXValue {
     value_type: IntegerType,
     place: PlaceKey,
 }
@@ -859,10 +860,11 @@ fn stable_array_index_projection(
         return Some(PlaceProjection::Index(value));
     }
 
-    // Stable-index form (3): a stable usize-value.  stable_value recursively
-    // validates array-element indices, so constructs such as a[b[i]] terminate
+    // Stable-index form (3): a stable usize-value. The stable X-value
+    // classifier recursively validates array-element indices, so constructs
+    // such as a[b[i]] terminate
     // naturally at the finite expression tree.
-    if let Some(stable) = stable_value(
+    if let Some(stable_x) = stable_x_value(
         index,
         while_span,
         loop_body_hir_ids,
@@ -870,17 +872,17 @@ fn stable_array_index_projection(
         cx,
         target,
     ) {
-        if stable.value_type == IntegerType::Primitive("usize") {
+        if stable_x.value_type == IntegerType::Primitive("usize") {
             return Some(PlaceProjection::StableIndex);
         }
     }
 
     // Stable-index form (4): `INDEX_1 as usize`, where INDEX_1 is a stable
-    // primitive-integer value. stable_value returning a value proves exactly
-    // that integer-valued stability requirement here.
+    // primitive-integer value. Classifying the operand as a stable X-value
+    // proves exactly that integer-valued stability requirement here.
     if let ExprKind::Cast(inner, cast_ty) = &index.kind {
         if integer_type_from_ty(cast_ty) == Some(IntegerType::Primitive("usize")) {
-            stable_value(
+            stable_x_value(
                 inner,
                 while_span,
                 loop_body_hir_ids,
@@ -1000,7 +1002,7 @@ fn collect_stability_syntax_facts(
     collector.visit_crate(krate);
 }
 
-fn is_t_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt) -> bool {
+fn is_x_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt) -> bool {
     let actual = match env.type_info_for_expr(expr, cx) {
         Some(TypeInfo::Integer(integer)) => integer,
         _ => return false,
@@ -1021,14 +1023,14 @@ fn is_t_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &Re
     }
 }
 
-fn stable_value(
+fn stable_x_value(
     expr: &Expr,
     while_span: Span,
     loop_body_hir_ids: &[HirId],
     env: &TypeEnvironment,
     cx: &RefactorCtxt,
     target: TargetInfo,
-) -> Option<StableValue> {
+) -> Option<StableXValue> {
     let value_type = match env.type_info_for_expr(expr, cx)? {
         TypeInfo::Integer(integer) => integer,
         _ => return None,
@@ -1071,8 +1073,8 @@ fn stable_value(
         }
     } else {
         // Mixed projections (for example s.a[0]) are deliberately rejected:
-        // they are not one of the base-case stable-value shapes enumerated in
-        // the specification.
+        // they are not one of the stable X-value shapes enumerated in the
+        // initial transformation specification.
         return None;
     }
 
@@ -1096,7 +1098,7 @@ fn stable_value(
         },
         BaseKey::Local(_) => match base_meta.origin {
             BaseOrigin::Param if is_array_element => {
-                // The stable-array clauses cover global arrays and arrays
+                // The stable X-value array clauses cover global arrays and arrays
                 // defined inside the function, but not arrays passed as
                 // function parameters.
                 return None;
@@ -1135,7 +1137,7 @@ fn stable_value(
         }
     }
 
-    Some(StableValue { value_type, place })
+    Some(StableXValue { value_type, place })
 }
 
 // -----------------------------------------------------------------------------
@@ -1159,7 +1161,7 @@ fn classify_start(
         return Some(StartKind::Literal(value));
     }
 
-    if is_t_value(expr, induction_ty, env, cx) {
+    if is_x_value(expr, induction_ty, env, cx) {
         return Some(StartKind::TValue);
     }
 
@@ -1171,7 +1173,7 @@ fn classify_start(
             TypeInfo::Integer(integer) => integer,
             _ => return None,
         };
-        if source_ty == induction_ty || !is_t_value(inner, source_ty, env, cx) {
+        if source_ty == induction_ty || !is_x_value(inner, source_ty, env, cx) {
             return None;
         }
         return Some(StartKind::CastValue);
@@ -1261,16 +1263,16 @@ fn classify_bound(
         return Some(BoundKind::Literal(value));
     }
 
-    if let Some(stable) = stable_value(bound, while_span, loop_body_hir_ids, env, cx, target) {
-        if stable.value_type == induction_ty {
+    if let Some(stable_x) = stable_x_value(bound, while_span, loop_body_hir_ids, env, cx, target) {
+        if stable_x.value_type == induction_ty {
             if direction == Direction::DescendingStrict {
-                let assigned = statically_determinable_value(
-                    &stable, preceding, env, cx, target,
+                let determined_value = statically_determinable_x_value(
+                    &stable_x, preceding, env, cx, target,
                 )?;
-                if !integer_value_fits_type(assigned, induction_ty, target) {
+                if !integer_value_fits_type(determined_value, induction_ty, target) {
                     return None;
                 }
-                let plus_one = add_one(assigned)?;
+                let plus_one = add_one(determined_value)?;
                 if !integer_value_fits_type(plus_one, induction_ty, target) {
                     return None;
                 }
@@ -1297,13 +1299,13 @@ fn classify_bound(
         return None;
     }
 
-    let stable = stable_value(inner, while_span, loop_body_hir_ids, env, cx, target)?;
-    if stable.value_type == induction_ty {
+    let stable_x = stable_x_value(inner, while_span, loop_body_hir_ids, env, cx, target)?;
+    if stable_x.value_type == induction_ty {
         if direction == Direction::DescendingStrict {
-            let assigned = statically_determinable_value(
-                &stable, preceding, env, cx, target,
+            let determined_value = statically_determinable_x_value(
+                &stable_x, preceding, env, cx, target,
             )?;
-            let plus_one = add_one(assigned)?;
+            let plus_one = add_one(determined_value)?;
             if !integer_value_fits_type(plus_one, induction_ty, target) {
                 return None;
             }
@@ -1316,13 +1318,13 @@ fn classify_bound(
     }
 
     if direction == Direction::DescendingStrict {
-        let assigned = statically_determinable_value(
-            &stable, preceding, env, cx, target,
+        let determined_value = statically_determinable_x_value(
+            &stable_x, preceding, env, cx, target,
         )?;
-        if !integer_value_fits_type(assigned, stable.value_type, target) {
+        if !integer_value_fits_type(determined_value, stable_x.value_type, target) {
             return None;
         }
-        let cast_value = cast_integer_value(assigned, induction_ty, target);
+        let cast_value = cast_integer_value(determined_value, induction_ty, target);
         let plus_one = add_one(cast_value)?;
         if !integer_value_fits_type(plus_one, induction_ty, target) {
             return None;
@@ -1476,14 +1478,14 @@ fn classify_step(
     let (value, source_type) = if let Some(value) = unsuffixed_integer_literal_value(&increment.step_expr) {
         (value, None)
     } else {
-        let stable = stable_value(&increment.step_expr, while_span, loop_body_hir_ids, env, cx, target)?;
-        let assigned = statically_determinable_value(
-            &stable, preceding, env, cx, target,
+        let stable_x = stable_x_value(&increment.step_expr, while_span, loop_body_hir_ids, env, cx, target)?;
+        let determined_value = statically_determinable_x_value(
+            &stable_x, preceding, env, cx, target,
         )?;
-        if !integer_value_fits_type(assigned, stable.value_type, target) {
+        if !integer_value_fits_type(determined_value, stable_x.value_type, target) {
             return None;
         }
-        (assigned, Some(stable.value_type))
+        (determined_value, Some(stable_x.value_type))
     };
 
     if value.is_zero() || value.abs_magnitude() > unsigned_max_for_bits(target.pointer_width) {
@@ -1656,18 +1658,19 @@ fn statements_access_local(
     false
 }
 
-fn statically_determinable_value(
-    stable: &StableValue,
+fn statically_determinable_x_value(
+    stable_x: &StableXValue,
     preceding: &[Stmt],
     env: &TypeEnvironment,
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> Option<IntValue> {
-    // Stable array elements may use stable dynamic indices. The stronger
-    // statically-determinable definition accepts only statically known indices:
+    // Stable X-values that are array elements may use stable dynamic indices.
+    // The stronger statically determinable X-value definition accepts only
+    // statically known indices:
     // an unsuffixed integer literal expression or an integer literal cast
     // expression (`int as INT_0 as INT_1`).
-    if stable
+    if stable_x
         .place
         .projections
         .iter()
@@ -1676,23 +1679,23 @@ fn statically_determinable_value(
         return None;
     }
 
-    global_literal_initializer_value(stable, env, target)
-        .or_else(|| last_direct_literal_assignment(&stable.place, preceding, cx, target))
+    global_literal_initializer_value(stable_x, env, target)
+        .or_else(|| last_direct_literal_assignment(&stable_x.place, preceding, cx, target))
 }
 
 fn global_literal_initializer_value(
-    stable: &StableValue,
+    stable_x: &StableXValue,
     env: &TypeEnvironment,
     target: TargetInfo,
 ) -> Option<IntValue> {
-    let item_id = match stable.place.base {
+    let item_id = match stable_x.place.base {
         BaseKey::Item(id) => id,
         BaseKey::Local(_) => return None,
     };
 
-    // The global statically-determinable cases cover plain global values and
-    // global array elements / struct fields. Function-local const/static items
-    // are handled by the direct-statement history below.
+    // The global statically determinable X-value cases cover plain global
+    // values and global array elements / struct fields. Function-local
+    // const/static items are handled by the direct-statement history below.
     if env.item_is_defined_inside_function(item_id) {
         return None;
     }
@@ -1705,7 +1708,7 @@ fn global_literal_initializer_value(
     }
 
     let initializer = env.item_initializers.get(&item_id)?;
-    literal_value_from_initializer(initializer, &stable.place.projections, target)
+    literal_value_from_initializer(initializer, &stable_x.place.projections, target)
 }
 
 fn literal_value_from_initializer(
@@ -1989,7 +1992,7 @@ fn local_stability_facts(
     let infcx = tcx.infer_ctxt().build();
 
     // `closure_min_captures` records the actual capture mode inferred by
-    // rustc. This is the relevant distinction for the stable-value rule:
+    // rustc. This is the relevant distinction for the stable X-value rule:
     // ByRef creates a reference to the tracked local, whereas ByValue does not.
     // Use the capture-kind span for the temporal "before or during" boundary.
     let captured_by_reference_before_or_during = tables
@@ -2560,7 +2563,7 @@ fn make_range_expr(
         (true, true, true) => {
             "($start_out:Expr ..= $end_out:Expr).rev().step_by($step_out:Expr)"
         }
-        (false, true, _) => unreachable!("reversed base-case ranges are always inclusive"),
+        (false, true, _) => unreachable!("reversed initial-transformation ranges are always inclusive"),
     };
 
     let template = mcx.parse_expr(source);

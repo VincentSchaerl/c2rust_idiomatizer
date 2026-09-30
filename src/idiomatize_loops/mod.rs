@@ -1,6 +1,6 @@
-mod base_case;
+mod initial_transformation;
 
-use base_case::base_case;
+use initial_transformation::initial_transformation;
 
 use c2rust_refactor::command::{DriverCommand, Registry};
 use c2rust_refactor::driver::Phase;
@@ -37,8 +37,9 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
         let options = parse_options(args);
         validate_options(options);
 
-        // The base case deliberately runs in Phase 3: its stability checks need
-        // rustc's type-checking results/adjustments (in particular auto-borrows)
+        // The initial transformation deliberately runs in Phase 3: its stability
+        // checks need rustc's type-checking results/adjustments (in particular
+        // auto-borrows)
         // and ExprUseVisitor.
         Box::new(DriverCommand::new(Phase::Phase3, move |st, cx| {
             let target = &cx.session().target;
@@ -61,7 +62,7 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
                 c_longlong_width: 64,
             };
 
-            base_case(st, cx, target_info);
+            initial_transformation(st, cx, target_info);
         }))
     });
 }
