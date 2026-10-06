@@ -1,7 +1,7 @@
 #include <stdio.h>
 
-#include "test_idiomatize_loops_pass_arrays_as_slices_support.h"
-#include "test_idiomatize_loops_pass_arrays_as_slices.h"
+#include "test_6_idiomatize_loops_pass_arrays_as_slices_support.h"
+#include "test_5_idiomatize_loops_pass_arrays_as_slices.h"
 
 static void iterate_array_2
 (
@@ -16,7 +16,7 @@ enum
     LENGTH_1 = 10
 };
 
-void test_idiomatize_loops_pass_arrays_as_slices_support()
+void test_6_idiomatize_loops_pass_arrays_as_slices_support()
 {
     int array[10];
     const int array_const[10];
@@ -34,5 +34,5 @@ void test_idiomatize_loops_pass_arrays_as_slices_support()
     iterate_array_6(array_const, LENGTH_1);
     iterate_array_6(array_const, sizeof(array_const) / sizeof(array_const[0]));
 
-    printf("End of test_idiomatize_loops_pass_arrays_as_slices_support().\n");
+    printf("End of test_6_idiomatize_loops_pass_arrays_as_slices_support().\n");
 }

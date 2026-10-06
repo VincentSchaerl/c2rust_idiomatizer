@@ -1,6 +1,6 @@
 #pragma once
 
-void test_idiomatize_loops_pass_arrays_as_slices();
+void test_5_idiomatize_loops_pass_arrays_as_slices();
 
 void iterate_array_1
 (

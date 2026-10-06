@@ -1,6 +1,9 @@
 use super::{
-    integer_type_from_ty, integer_type_range_is_subset, integer_value_fits_type,
-    unsuffixed_integer_literal_value, IntValue, IntegerType, TargetInfo,
+    array_type_with_literal_length, collect_public_integer_consts,
+    collect_public_integer_type_aliases, integer_type_from_ty, integer_type_range_is_subset,
+    integer_type_source, integer_value_fits_type, simple_loop_binding, strip_parens,
+    underlying_integer_type_from_ty, unsuffixed_integer_literal_value, IntegerConstMeta, IntValue,
+    IntegerType, TargetInfo,
 };
 
 use c2rust_refactor::ast_manip::visit_nodes;
@@ -34,12 +37,6 @@ enum ArrayKey {
 struct ArrayMeta {
     element_ty: P<Ty>,
     length: u128,
-}
-
-#[derive(Clone)]
-struct ConstMeta {
-    integer_ty: IntegerType,
-    value: IntValue,
 }
 
 #[derive(Clone)]
@@ -86,7 +83,7 @@ struct FunctionPlan {
 #[derive(Default)]
 struct GlobalInfo {
     aliases: HashMap<DefId, P<Ty>>,
-    consts: HashMap<DefId, ConstMeta>,
+    consts: HashMap<DefId, IntegerConstMeta>,
 }
 
 pub(super) fn pass_arrays_as_slices(
@@ -183,68 +180,9 @@ pub(super) fn pass_arrays_as_slices(
 }
 
 fn collect_global_info(krate: &Crate, cx: &RefactorCtxt, target: TargetInfo) -> GlobalInfo {
-    let mut info = GlobalInfo::default();
-    collect_aliases_from_items(&krate.items, cx, &mut info.aliases);
-    collect_global_consts_from_items(&krate.items, cx, target, &mut info);
-    info
-}
-
-fn collect_aliases_from_items(
-    items: &[P<Item>],
-    cx: &RefactorCtxt,
-    aliases: &mut HashMap<DefId, P<Ty>>,
-) {
-    for item in items {
-        match &item.kind {
-            ItemKind::TyAlias(alias) => {
-                // Constraint 7.c.ii permits TYPE_ALIAS only for a public
-                // global alias.  Keeping only public aliases here also makes
-                // arbitrary private aliases fail closed.
-                if item.vis.kind.is_pub() {
-                    if let Some(ty) = &alias.ty {
-                        aliases.insert(cx.node_def_id(item.id), ty.clone());
-                    }
-                }
-            }
-            ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
-                collect_aliases_from_items(module_items, cx, aliases);
-            }
-            _ => {}
-        }
-    }
-}
-
-fn collect_global_consts_from_items(
-    items: &[P<Item>],
-    cx: &RefactorCtxt,
-    target: TargetInfo,
-    info: &mut GlobalInfo,
-) {
-    for item in items {
-        match &item.kind {
-            ItemKind::Const(_, ty, Some(init)) => {
-                if !item.vis.kind.is_pub() {
-                    continue;
-                }
-                if let Some(value) = unsuffixed_integer_literal_value(init) {
-                    if let Some(integer_ty) =
-                        underlying_integer_type_from_ty(ty, cx, &info.aliases)
-                    {
-                        if integer_value_fits_type(value, integer_ty, target) {
-                            info.consts.insert(
-                                cx.node_def_id(item.id),
-                                ConstMeta { integer_ty, value },
-                            );
-                        }
-                    }
-                }
-            }
-            ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
-                collect_global_consts_from_items(module_items, cx, target, info);
-            }
-            _ => {}
-        }
-    }
+    let aliases = collect_public_integer_type_aliases(krate, cx);
+    let consts = collect_public_integer_consts(krate, cx, target, &aliases);
+    GlobalInfo { aliases, consts }
 }
 
 fn collect_local_arrays(krate: &Crate, cx: &RefactorCtxt, arrays: &mut HashMap<ArrayKey, ArrayMeta>) {
@@ -253,7 +191,7 @@ fn collect_local_arrays(krate: &Crate, cx: &RefactorCtxt, arrays: &mut HashMap<A
             Some(ty) => ty,
             None => return,
         };
-        let (element_ty, length) = match array_decl_type(ty) {
+        let (element_ty, length) = match array_type_with_literal_length(ty) {
             Some(value) => value,
             None => return,
         };
@@ -277,17 +215,6 @@ fn collect_local_arrays(krate: &Crate, cx: &RefactorCtxt, arrays: &mut HashMap<A
             },
         );
     });
-}
-
-fn array_decl_type(ty: &Ty) -> Option<(P<Ty>, u128)> {
-    let (element_ty, len) = match &ty.kind {
-        TyKind::Array(element_ty, len) => (element_ty, len),
-        _ => return None,
-    };
-    match unsuffixed_integer_literal_value(&len.value)? {
-        IntValue::NonNegative(value) => Some((element_ty.clone(), value)),
-        IntValue::Negative(_) => None,
-    }
 }
 
 fn array_initializer(expr: &Expr) -> bool {
@@ -725,16 +652,6 @@ fn analyze_loop(
         pointer_access_ids: checker.pointer_access_ids,
         allowed_array_path_ids: checker.allowed_array_path_ids,
     })
-}
-
-fn simple_loop_binding(pat: &Pat, cx: &RefactorCtxt) -> Option<(Option<HirId>, String)> {
-    match pat.kind {
-        PatKind::Ident(BindingAnnotation(ByRef::No, Mutability::Not), ident, None) => Some((
-            cx.hir_map().opt_node_to_hir_id(pat.id),
-            ident.name.to_string(),
-        )),
-        _ => None,
-    }
 }
 
 fn zero_start_type(expr: &Expr) -> Option<IntegerType> {
@@ -2097,19 +2014,6 @@ fn array_key_for_expr(expr: &Expr, cx: &RefactorCtxt) -> Option<ArrayKey> {
     }
 }
 
-fn underlying_integer_type_from_ty(
-    ty: &Ty,
-    cx: &RefactorCtxt,
-    aliases: &HashMap<DefId, P<Ty>>,
-) -> Option<IntegerType> {
-    if let Some(integer) = integer_type_from_ty(ty) {
-        return Some(integer);
-    }
-    let alias_id = cx.try_resolve_ty(ty)?;
-    let target = aliases.get(&alias_id)?;
-    underlying_integer_type_from_ty(target, cx, aliases)
-}
-
 fn same_type(a: &Ty, b: &Ty, cx: &RefactorCtxt) -> bool {
     if let (Some(a_ty), Some(b_ty)) = (cx.opt_node_type(a.id), cx.opt_node_type(b.id)) {
         if a_ty == b_ty {
@@ -2178,13 +2082,6 @@ fn simple_path_name(expr: &Expr) -> Option<&str> {
         }
         _ => None,
     }
-}
-
-fn strip_parens(mut expr: &Expr) -> &Expr {
-    while let ExprKind::Paren(inner) = &expr.kind {
-        expr = inner;
-    }
-    expr
 }
 
 struct ApplyCallSites<'cx, 'a, 'tcx: 'a> {
@@ -2493,21 +2390,5 @@ fn make_slice_type(
     match &rewritten[0].kind {
         rustc_ast::StmtKind::Local(local) => local.ty.clone().expect("temporary slice type"),
         _ => unreachable!("temporary slice declaration did not parse as a local"),
-    }
-}
-
-fn integer_type_source(ty: IntegerType) -> &'static str {
-    match ty {
-        IntegerType::Primitive(name) => name,
-        IntegerType::C(super::CIntegerType::SChar) => "::core::ffi::c_schar",
-        IntegerType::C(super::CIntegerType::UChar) => "::core::ffi::c_uchar",
-        IntegerType::C(super::CIntegerType::Short) => "::core::ffi::c_short",
-        IntegerType::C(super::CIntegerType::UShort) => "::core::ffi::c_ushort",
-        IntegerType::C(super::CIntegerType::Int) => "::core::ffi::c_int",
-        IntegerType::C(super::CIntegerType::UInt) => "::core::ffi::c_uint",
-        IntegerType::C(super::CIntegerType::Long) => "::core::ffi::c_long",
-        IntegerType::C(super::CIntegerType::ULong) => "::core::ffi::c_ulong",
-        IntegerType::C(super::CIntegerType::LongLong) => "::core::ffi::c_longlong",
-        IntegerType::C(super::CIntegerType::ULongLong) => "::core::ffi::c_ulonglong",
     }
 }

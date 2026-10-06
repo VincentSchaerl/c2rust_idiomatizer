@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "test_idiomatize_loops_pass_arrays_as_slices.h"
+#include "test_5_idiomatize_loops_pass_arrays_as_slices.h"
 #include "nested_struct.h"
 
 static void iterate_array_0
@@ -40,7 +40,6 @@ static outer_struct_t* iterate_array_5
     outer_struct_t* arg2
 );
 
-
 #define LENGTH_0 10
 
 enum
@@ -48,7 +47,7 @@ enum
     LENGTH_1 = 10
 };
 
-void test_idiomatize_loops_pass_arrays_as_slices()
+void test_5_idiomatize_loops_pass_arrays_as_slices()
 {
     int array[10];
     const int array_const[10];
@@ -98,7 +97,7 @@ void test_idiomatize_loops_pass_arrays_as_slices()
     iterate_array_6(array_const, LENGTH_1);
     iterate_array_6(array_const, sizeof(array_const) / sizeof(array_const[0]));
 
-    printf("End of test_idiomatize_loops_pass_arrays_as_slices().\n");
+    printf("End of test_5_idiomatize_loops_pass_arrays_as_slices().\n");
 }
 
 static void iterate_array_0

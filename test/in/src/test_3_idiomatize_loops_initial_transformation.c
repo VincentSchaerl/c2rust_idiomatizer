@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "test_idiomatize_loops_initial_transformation.h"
+#include "test_3_idiomatize_loops_initial_transformation.h"
 #include "nested_struct.h"
 
 static int return_int();
@@ -60,7 +60,7 @@ extern const int* pointer_global_const_0;
 static int* pointer_global_static = &variable_global_static;
 extern int** pointer_2d_global;
 
-extern int array_global[10];
+int array_global_1[10];
 static int array_global_static[10] = {0};
 extern int array_2d_global[2][2];
 
@@ -76,7 +76,7 @@ enum
     type_alias_value = 0        // also stable
 };
 
-void test_idiomatize_loops_initial_transformation()
+void test_3_idiomatize_loops_initial_transformation()
 {
     // T-values
 
@@ -192,8 +192,8 @@ void test_idiomatize_loops_initial_transformation()
     for (int i_31 = **pointer_2d; i_31 < 10; i_31++) {volatile int keep = 1; if (keep) break;}
 
     const int i = 0;
-    for (int i_32 = array_global[0]; i_32 < 10; i_32++) {volatile int keep = 1; if (keep) break;}
-    for (int i_33 = array_global[i]; i_33 < 10; i_33++) {volatile int keep = 1; if (keep) break;}
+    for (int i_32 = array_global_1[0]; i_32 < 10; i_32++) {volatile int keep = 1; if (keep) break;}
+    for (int i_33 = array_global_1[i]; i_33 < 10; i_33++) {volatile int keep = 1; if (keep) break;}
     for (int i_34 = array_global_static[0]; i_34 < 10; i_34++) {volatile int keep = 1; if (keep) break;}
     for (int i_35 = array_global_static[i]; i_35 < 10; i_35++) {volatile int keep = 1; if (keep) break;}
     for (int i_36 = array_2d_global[0][0]; i_36 < 10; i_36++) {volatile int keep = 1; if (keep) break;}
@@ -801,7 +801,7 @@ void test_idiomatize_loops_initial_transformation()
 
     // END
 
-    printf("End of test_idiomatize_loops_initial_transformation().\n");
+    printf("End of test_3_idiomatize_loops_initial_transformation().\n");
 }
 
 static int return_int()

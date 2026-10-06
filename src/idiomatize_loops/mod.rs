@@ -1,16 +1,29 @@
 mod initial_transformation;
+mod iterate_arrays_idiomatically;
 mod pass_arrays_as_slices;
 
 use initial_transformation::initial_transformation;
+use iterate_arrays_idiomatically::iterate_arrays_idiomatically;
 use pass_arrays_as_slices::pass_arrays_as_slices;
 
 use c2rust_refactor::command::{DriverCommand, Registry};
 use c2rust_refactor::driver::Phase;
+use c2rust_refactor::RefactorCtxt;
 
-use rustc_ast::{Expr, ExprKind, LitIntType, LitKind, Ty, TyKind, UnOp};
+use rustc_ast::ptr::P;
+use rustc_ast::{
+    BindingAnnotation, ByRef, Expr, ExprKind, Item, ItemKind, LitIntType, LitKind, Mutability, Pat,
+    PatKind, Ty, TyKind, UnOp,
+};
+use rustc_hir::def_id::DefId;
+use rustc_hir::HirId;
+use rustc_middle::ty;
+
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct IdiomatizeLoopsOptions {
+    pub iterate_arrays_idiomatically: bool,
     pub pass_arrays_as_slices: bool,
     pub transform_public_functions: bool,
     pub index_type_to_usize: bool,
@@ -20,6 +33,7 @@ pub(super) struct IdiomatizeLoopsOptions {
 impl Default for IdiomatizeLoopsOptions {
     fn default() -> Self {
         Self {
+            iterate_arrays_idiomatically: true,
             pass_arrays_as_slices: true,
             transform_public_functions: true,
             index_type_to_usize: true,
@@ -69,6 +83,9 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
             };
 
             initial_transformation(st, cx, target_info);
+            if options.iterate_arrays_idiomatically {
+                iterate_arrays_idiomatically(st, cx, target_info);
+            }
             if options.pass_arrays_as_slices {
                 pass_arrays_as_slices(
                     st,
@@ -86,7 +103,10 @@ fn parse_options(args: &[String]) -> IdiomatizeLoopsOptions {
     let mut index_based_to_iterator_based_explicit = false;
 
     for arg in args {
-        if let Some(value) = arg.strip_prefix("pass-arrays-as-slices=") {
+        if let Some(value) = arg.strip_prefix("iterate-arrays-idiomatically=") {
+            options.iterate_arrays_idiomatically =
+                parse_bool_arg("iterate-arrays-idiomatically", value);
+        } else if let Some(value) = arg.strip_prefix("pass-arrays-as-slices=") {
             options.pass_arrays_as_slices = parse_bool_arg("pass-arrays-as-slices", value);
         } else if let Some(value) = arg.strip_prefix("transform-public-functions=") {
             options.transform_public_functions =
@@ -362,5 +382,167 @@ fn unsigned_max_for_bits(bits: u32) -> u128 {
         u128::MAX
     } else {
         (1u128 << bits) - 1
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Shared source-level helpers used by multiple loop passes
+// -----------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub(super) struct IntegerConstMeta {
+    pub integer_ty: IntegerType,
+    pub value: IntValue,
+}
+
+pub(super) fn collect_public_integer_type_aliases(
+    krate: &rustc_ast::Crate,
+    cx: &RefactorCtxt,
+) -> HashMap<DefId, P<Ty>> {
+    fn collect(
+        items: &[P<Item>],
+        cx: &RefactorCtxt,
+        aliases: &mut HashMap<DefId, P<Ty>>,
+    ) {
+        for item in items {
+            match &item.kind {
+                ItemKind::TyAlias(alias) if item.vis.kind.is_pub() => {
+                    if let Some(ty) = &alias.ty {
+                        aliases.insert(cx.node_def_id(item.id), ty.clone());
+                    }
+                }
+                ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
+                    collect(module_items, cx, aliases);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut aliases = HashMap::new();
+    collect(&krate.items, cx, &mut aliases);
+    aliases
+}
+
+pub(super) fn collect_public_integer_consts(
+    krate: &rustc_ast::Crate,
+    cx: &RefactorCtxt,
+    target: TargetInfo,
+    aliases: &HashMap<DefId, P<Ty>>,
+) -> HashMap<DefId, IntegerConstMeta> {
+    fn collect(
+        items: &[P<Item>],
+        cx: &RefactorCtxt,
+        target: TargetInfo,
+        aliases: &HashMap<DefId, P<Ty>>,
+        consts: &mut HashMap<DefId, IntegerConstMeta>,
+    ) {
+        for item in items {
+            match &item.kind {
+                ItemKind::Const(_, ty, Some(init)) if item.vis.kind.is_pub() => {
+                    let value = match unsuffixed_integer_literal_value(init) {
+                        Some(value) => value,
+                        None => continue,
+                    };
+                    let integer_ty = match underlying_integer_type_from_ty(ty, cx, aliases) {
+                        Some(integer_ty) => integer_ty,
+                        None => continue,
+                    };
+                    if integer_value_fits_type(value, integer_ty, target) {
+                        consts.insert(
+                            cx.node_def_id(item.id),
+                            IntegerConstMeta { integer_ty, value },
+                        );
+                    }
+                }
+                ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
+                    collect(module_items, cx, target, aliases, consts);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut consts = HashMap::new();
+    collect(&krate.items, cx, target, aliases, &mut consts);
+    consts
+}
+
+pub(super) fn underlying_integer_type_from_ty(
+    ty: &Ty,
+    cx: &RefactorCtxt,
+    aliases: &HashMap<DefId, P<Ty>>,
+) -> Option<IntegerType> {
+    if let Some(integer) = integer_type_from_ty(ty) {
+        return Some(integer);
+    }
+    let alias_id = cx.try_resolve_ty(ty)?;
+    let target = aliases.get(&alias_id)?;
+    underlying_integer_type_from_ty(target, cx, aliases)
+}
+
+pub(super) fn array_type_with_literal_length(ty: &Ty) -> Option<(P<Ty>, u128)> {
+    let (element_ty, len) = match &ty.kind {
+        TyKind::Array(element_ty, len) => (element_ty, len),
+        _ => return None,
+    };
+    match unsuffixed_integer_literal_value(&len.value)? {
+        IntValue::NonNegative(value) => Some((element_ty.clone(), value)),
+        IntValue::Negative(_) => None,
+    }
+}
+
+pub(super) fn integer_type_from_rustc_ty(ty: ty::Ty<'_>) -> Option<IntegerType> {
+    match ty.kind() {
+        ty::TyKind::Int(ty::IntTy::I8) => Some(IntegerType::Primitive("i8")),
+        ty::TyKind::Int(ty::IntTy::I16) => Some(IntegerType::Primitive("i16")),
+        ty::TyKind::Int(ty::IntTy::I32) => Some(IntegerType::Primitive("i32")),
+        ty::TyKind::Int(ty::IntTy::I64) => Some(IntegerType::Primitive("i64")),
+        ty::TyKind::Int(ty::IntTy::I128) => Some(IntegerType::Primitive("i128")),
+        ty::TyKind::Int(ty::IntTy::Isize) => Some(IntegerType::Primitive("isize")),
+        ty::TyKind::Uint(ty::UintTy::U8) => Some(IntegerType::Primitive("u8")),
+        ty::TyKind::Uint(ty::UintTy::U16) => Some(IntegerType::Primitive("u16")),
+        ty::TyKind::Uint(ty::UintTy::U32) => Some(IntegerType::Primitive("u32")),
+        ty::TyKind::Uint(ty::UintTy::U64) => Some(IntegerType::Primitive("u64")),
+        ty::TyKind::Uint(ty::UintTy::U128) => Some(IntegerType::Primitive("u128")),
+        ty::TyKind::Uint(ty::UintTy::Usize) => Some(IntegerType::Primitive("usize")),
+        _ => None,
+    }
+}
+
+
+pub(super) fn simple_loop_binding(
+    pat: &Pat,
+    cx: &RefactorCtxt,
+) -> Option<(Option<HirId>, String)> {
+    match pat.kind {
+        PatKind::Ident(BindingAnnotation(ByRef::No, Mutability::Not), ident, None) => Some((
+            cx.hir_map().opt_node_to_hir_id(pat.id),
+            ident.name.to_string(),
+        )),
+        _ => None,
+    }
+}
+
+pub(super) fn strip_parens(mut expr: &Expr) -> &Expr {
+    while let ExprKind::Paren(inner) = &expr.kind {
+        expr = inner;
+    }
+    expr
+}
+
+pub(super) fn integer_type_source(ty: IntegerType) -> &'static str {
+    match ty {
+        IntegerType::Primitive(name) => name,
+        IntegerType::C(CIntegerType::SChar) => "::core::ffi::c_schar",
+        IntegerType::C(CIntegerType::UChar) => "::core::ffi::c_uchar",
+        IntegerType::C(CIntegerType::Short) => "::core::ffi::c_short",
+        IntegerType::C(CIntegerType::UShort) => "::core::ffi::c_ushort",
+        IntegerType::C(CIntegerType::Int) => "::core::ffi::c_int",
+        IntegerType::C(CIntegerType::UInt) => "::core::ffi::c_uint",
+        IntegerType::C(CIntegerType::Long) => "::core::ffi::c_long",
+        IntegerType::C(CIntegerType::ULong) => "::core::ffi::c_ulong",
+        IntegerType::C(CIntegerType::LongLong) => "::core::ffi::c_longlong",
+        IntegerType::C(CIntegerType::ULongLong) => "::core::ffi::c_ulonglong",
     }
 }

@@ -1,8 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "test_remove_redundant_integer_casts.h"
-#include "test_remove_redunant_integer_casts_support.h"
+#include "test_1_remove_redundant_integer_casts.h"
+#include "test_2_remove_redundant_integer_casts_support.h"
 #include "nested_struct.h"
 
 static void keep_variable_global_const(int variable_global_const);
@@ -42,7 +42,7 @@ int variable_global = 0;
 static int variable_global_static = 2;
 
 // Initialization of an array
-int array_global[4] = {-3, 4, -5, 6};
+int array_global_0[4] = {-3, 4, -5, 6};
 static int array_global_static[4] = {-7, 8, -9, 10};
 int array_2d_global[2][2] = {{-11, 12}, {-13, 14}};
 
@@ -59,7 +59,7 @@ outer_struct_t* outer_struct_ptr_global = &outer_struct_global;
 const outer_struct_t* outer_struct_ptr_global_const_0 = &outer_struct_global;
 static outer_struct_t* outer_struct_ptr_global_static = &outer_struct_global_static;
 
-void test_remove_redundant_integer_casts()
+void test_1_remove_redundant_integer_casts()
 {
     keep_variable_global_const(VARIABLE_GLOBAL_CONST);
 
@@ -118,8 +118,8 @@ void test_remove_redundant_integer_casts()
 
     // Assignment to an element of an array
     const int i = 0;
-    array_global[0] = -63;
-    array_global[i] = 64;
+    array_global_0[0] = -63;
+    array_global_0[i] = 64;
     array_global_static[0] = -65;
     array_global_static[i] = 66;
     array_2d_global[0][0] = -67;
@@ -132,9 +132,9 @@ void test_remove_redundant_integer_casts()
     array_2d[i][i] = 74;
 
     // Comparison with the value of an element of an array
-    if (array_global[0] != -75) {volatile int keep = 0;}
+    if (array_global_0[0] != -75) {volatile int keep = 0;}
     if (76 == array_global_static[0]) {volatile int keep = 0;}
-    if (-77 >= array_global[i]) {volatile int keep = 0;}
+    if (-77 >= array_global_0[i]) {volatile int keep = 0;}
     if (78 > array_global_static[i]) {volatile int keep = 0;}
     if (-79 < array_2d_global[0][0]) {volatile int keep = 0;}
     if (80 <= array_2d_global[i][i]) {volatile int keep = 0;}
@@ -235,7 +235,7 @@ void test_remove_redundant_integer_casts()
     // Return of a function
     return_integer();
 
-    printf("End of test_remove_redundant_integer_casts().\n");
+    printf("End of test_1_remove_redundant_integer_casts().\n");
 }
 
 static void keep_variable_global_const(int variable_global_const) {}
