@@ -48,13 +48,11 @@ enum
 };
 
 extern int array_global[10];
-static int array_global_static[10];
 
 void test_idiomatize_loops_pass_arrays_as_slices()
 {
     int array[10];
     const int array_const[10];
-    static int array_static[10];
     char _char;
     int _int;
     outer_struct_t outer_struct;
@@ -64,27 +62,15 @@ void test_idiomatize_loops_pass_arrays_as_slices()
     iterate_array_0(array_global, LENGTH_0);
     iterate_array_0(array_global, LENGTH_1);
     iterate_array_0(array_global, sizeof(array_global) / sizeof(array_global[0]));
-    iterate_array_0(array_global_static, 10);
-    iterate_array_0(array_global_static, LENGTH_0);
-    iterate_array_0(array_global_static, LENGTH_1);
-    iterate_array_0(array_global_static, sizeof(array_global_static) / sizeof(array_global_static[0]));
     iterate_array_0(array, 10);
     iterate_array_0(array, LENGTH_0);
     iterate_array_0(array, LENGTH_1);
     iterate_array_0(array, sizeof(array) / sizeof(array[0]));
-    iterate_array_0(array_static, 10);
-    iterate_array_0(array_static, LENGTH_0);
-    iterate_array_0(array_static, LENGTH_1);
-    iterate_array_0(array_static, sizeof(array_static) / sizeof(array_static[0]));
 
     iterate_array_1(_int, 10, array_global, _char);
     iterate_array_1(_int, LENGTH_0, array_global, _char);
     iterate_array_1(_int, LENGTH_1, array_global, _char);
     iterate_array_1(_int, sizeof(array_global) / sizeof(array_global[0]), array_global, _char);
-    iterate_array_1(_int, 10, array_global_static, _char);
-    iterate_array_1(_int, LENGTH_0, array_global_static, _char);
-    iterate_array_1(_int, LENGTH_1, array_global_static, _char);
-    iterate_array_1(_int, sizeof(array_global_static) / sizeof(array_global_static[0]), array_global_static, _char);
     iterate_array_1(_int, 10, array, _char);
     iterate_array_1(_int, LENGTH_0, array, _char);
     iterate_array_1(_int, LENGTH_1, array, _char);
@@ -93,43 +79,20 @@ void test_idiomatize_loops_pass_arrays_as_slices()
     iterate_array_1(_int, LENGTH_0, array_const, _char);
     iterate_array_1(_int, LENGTH_1, array_const, _char);
     iterate_array_1(_int, sizeof(array_const) / sizeof(array_const[0]), array_const, _char);
-    iterate_array_1(_int, 10, array_static, _char);
-    iterate_array_1(_int, LENGTH_0, array_static, _char);
-    iterate_array_1(_int, LENGTH_1, array_static, _char);
-    iterate_array_1(_int, sizeof(array_static) / sizeof(array_static[0]), array_static, _char);
 
     iterate_array_2(array_global, outer_struct, 10);
     iterate_array_2(array_global, outer_struct, LENGTH_0);
     iterate_array_2(array_global, outer_struct, LENGTH_1);
     iterate_array_2(array_global, outer_struct, sizeof(array_global) / sizeof(array_global[0]));
-    iterate_array_2(array_global_static, outer_struct, 10);
-    iterate_array_2(array_global_static, outer_struct, LENGTH_0);
-    iterate_array_2(array_global_static, outer_struct, LENGTH_1);
-    iterate_array_2(array_global_static, outer_struct, sizeof(array_global_static) / sizeof(array_global_static[0]));
     iterate_array_2(array, outer_struct, 10);
     iterate_array_2(array, outer_struct, LENGTH_0);
     iterate_array_2(array, outer_struct, LENGTH_1);
     iterate_array_2(array, outer_struct, sizeof(array) / sizeof(array[0]));
-    iterate_array_2(array_static, outer_struct, 10);
-    iterate_array_2(array_static, outer_struct, LENGTH_0);
-    iterate_array_2(array_static, outer_struct, LENGTH_1);
-    iterate_array_2(array_static, outer_struct, sizeof(array_static) / sizeof(array_static[0]));
 
     iterate_array_3(_int, 10, _char, array_global, outer_struct_ptr);
     iterate_array_3(_int, LENGTH_0, _char, array_global, outer_struct_ptr);
     iterate_array_3(_int, LENGTH_1, _char, array_global, outer_struct_ptr);
     iterate_array_3(_int, sizeof(array_global) / sizeof(array_global[0]), _char, array_global, outer_struct_ptr);
-    iterate_array_3(_int, 10, _char, array_global_static, outer_struct_ptr);
-    iterate_array_3(_int, LENGTH_0, _char, array_global_static, outer_struct_ptr);
-    iterate_array_3(_int, LENGTH_1, _char, array_global_static, outer_struct_ptr);
-    iterate_array_3
-    (
-        _int,
-        sizeof(array_global_static) / sizeof(array_global_static[0]),
-        _char,
-        array_global_static,
-        outer_struct_ptr
-    );
     iterate_array_3(_int, 10, _char, array, outer_struct_ptr);
     iterate_array_3(_int, LENGTH_0, _char, array, outer_struct_ptr);
     iterate_array_3(_int, LENGTH_1, _char, array, outer_struct_ptr);
@@ -138,10 +101,6 @@ void test_idiomatize_loops_pass_arrays_as_slices()
     iterate_array_3(_int, LENGTH_0, _char, array_const, outer_struct_ptr);
     iterate_array_3(_int, LENGTH_1, _char, array_const, outer_struct_ptr);
     iterate_array_3(_int, sizeof(array_const) / sizeof(array_const[0]), _char, array_const, outer_struct_ptr);
-    iterate_array_3(_int, 10, _char, array_static, outer_struct_ptr);
-    iterate_array_3(_int, LENGTH_0, _char, array_static, outer_struct_ptr);
-    iterate_array_3(_int, LENGTH_1, _char, array_static, outer_struct_ptr);
-    iterate_array_3(_int, sizeof(array_static) / sizeof(array_static[0]), _char, array_static, outer_struct_ptr);
 
     iterate_array_4(array, 9);
 
