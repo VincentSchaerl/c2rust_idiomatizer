@@ -12,6 +12,7 @@ use rustc_ast::{Expr, ExprKind, LitIntType, LitKind, Ty, TyKind, UnOp};
 #[derive(Clone, Copy, Debug)]
 pub(super) struct IdiomatizeLoopsOptions {
     pub pass_arrays_as_slices: bool,
+    pub transform_public_functions: bool,
     pub index_type_to_usize: bool,
     pub index_based_to_iterator_based: bool,
 }
@@ -20,6 +21,7 @@ impl Default for IdiomatizeLoopsOptions {
     fn default() -> Self {
         Self {
             pass_arrays_as_slices: true,
+            transform_public_functions: true,
             index_type_to_usize: true,
             index_based_to_iterator_based: true,
         }
@@ -68,7 +70,12 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
 
             initial_transformation(st, cx, target_info);
             if options.pass_arrays_as_slices {
-                pass_arrays_as_slices(st, cx, target_info);
+                pass_arrays_as_slices(
+                    st,
+                    cx,
+                    target_info,
+                    options.transform_public_functions,
+                );
             }
         }))
     });
@@ -81,6 +88,9 @@ fn parse_options(args: &[String]) -> IdiomatizeLoopsOptions {
     for arg in args {
         if let Some(value) = arg.strip_prefix("pass-arrays-as-slices=") {
             options.pass_arrays_as_slices = parse_bool_arg("pass-arrays-as-slices", value);
+        } else if let Some(value) = arg.strip_prefix("transform-public-functions=") {
+            options.transform_public_functions =
+                parse_bool_arg("transform-public-functions", value);
         } else if let Some(value) = arg.strip_prefix("index-type-to-usize=") {
             options.index_type_to_usize = parse_bool_arg("index-type-to-usize", value);
         } else if let Some(value) = arg.strip_prefix("index-based-to-iterator-based=") {
@@ -100,6 +110,17 @@ fn parse_options(args: &[String]) -> IdiomatizeLoopsOptions {
 }
 
 fn validate_options(options: IdiomatizeLoopsOptions) {
+    if options.transform_public_functions && !options.pass_arrays_as_slices {
+        panic!(
+            concat!(
+                "Invalid arguments for idiomatize_loops: ",
+                "transform-public-functions=true requires ",
+                "pass-arrays-as-slices=true. Public-function transformation ",
+                "is part of pass-arrays-as-slices."
+            )
+        );
+    }
+
     if options.index_based_to_iterator_based && !options.index_type_to_usize {
         panic!(
             concat!(

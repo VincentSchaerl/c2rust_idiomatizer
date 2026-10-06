@@ -13,14 +13,14 @@ use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{
     AngleBracketedArg, BindingAnnotation, BorrowKind, ByRef, Crate, Expr, ExprKind, Extern,
-    ForeignItemKind, GenericArg, GenericArgs, IntTy, Item, ItemKind, LitIntType, LitKind, Local,
+    FnRetTy, ForeignItemKind, GenericArg, GenericArgs, IntTy, Item, ItemKind, LitIntType, LitKind, Local,
     LocalKind, Mutability, Pat, PatKind, RangeLimits, Ty, TyKind, UintTy, Unsafe,
 };
 use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
 use rustc_hir::HirId;
 use rustc_middle::ty::{self, ParamEnv};
-use rustc_span::Span;
+use rustc_span::{symbol::Symbol, Span};
 
 use std::collections::{HashMap, HashSet};
 
@@ -67,12 +67,15 @@ struct CallPlan {
 struct FunctionPlan {
     item_id: rustc_ast::NodeId,
     def_id: DefId,
+    foreign_decl_item_ids: HashSet<rustc_ast::NodeId>,
     array_index: usize,
     length_index: usize,
     array_name: String,
     pointer_mutability: Mutability,
     element_ty: P<Ty>,
     length_name: String,
+    restored_length_name: String,
+    restored_length_use_ids: HashSet<rustc_ast::NodeId>,
     length_ty: P<Ty>,
     length_integer_ty: IntegerType,
     restore_length: bool,
@@ -84,13 +87,13 @@ struct FunctionPlan {
 struct GlobalInfo {
     aliases: HashMap<DefId, P<Ty>>,
     consts: HashMap<DefId, ConstMeta>,
-    arrays: HashMap<ArrayKey, ArrayMeta>,
 }
 
 pub(super) fn pass_arrays_as_slices(
     st: &CommandState,
     cx: &RefactorCtxt,
     target: TargetInfo,
+    transform_public_functions: bool,
 ) {
     // Phase-3 semantic tables still describe the pre-rewrite crate.  The
     // initial transformation deliberately preserves the parameter, call, and
@@ -102,7 +105,7 @@ pub(super) fn pass_arrays_as_slices(
     };
 
     let global_info = collect_global_info(&snapshot, cx, target);
-    let mut arrays = global_info.arrays.clone();
+    let mut arrays = HashMap::new();
     collect_local_arrays(&snapshot, cx, &mut arrays);
 
     let mut plans = Vec::new();
@@ -114,6 +117,7 @@ pub(super) fn pass_arrays_as_slices(
             &arrays,
             cx,
             target,
+            transform_public_functions,
         ) {
             plans.push(plan);
         }
@@ -136,12 +140,10 @@ pub(super) fn pass_arrays_as_slices(
         return;
     }
 
-    // Constraint 6.d depends on which callees are themselves transformed in
-    // this pass. Start with all structurally valid candidates (constraints
-    // 1-6.c) and remove candidates whose call sites violate 6.d. Repeating to
-    // a fixed point is necessary because removing one callee can make a raw
-    // pointer passed to an earlier call no longer eligible for the non-escaping
-    // exception, which can invalidate another candidate in turn.
+    // Constraint 7.d is independent of whether an earlier callee is itself
+    // transformed.  Compute the direct-call raw-address expressions whose
+    // corresponding callee parameter is proven non-escaping, then validate
+    // every candidate against that stable fact set.
     filter_plans_by_aliasing(&snapshot, &mut plans, cx);
     if plans.is_empty() {
         return;
@@ -153,14 +155,24 @@ pub(super) fn pass_arrays_as_slices(
         .map(|plan| (plan.item_id, plan))
         .collect::<HashMap<_, _>>();
     let mut calls_by_id = HashMap::new();
+    let mut plans_by_foreign_item = HashMap::new();
     for plan in &plans {
         for call in &plan.calls {
             calls_by_id.insert(call.call_id, (plan.clone(), call.clone()));
         }
+        for foreign_id in &plan.foreign_decl_item_ids {
+            plans_by_foreign_item.insert(*foreign_id, plan.clone());
+        }
     }
 
     let mut krate = st.krate_mut();
-    rewrite_planned_functions(&mut krate.items, &plans_by_item, st, cx);
+    rewrite_planned_functions(
+        &mut krate.items,
+        &plans_by_item,
+        &plans_by_foreign_item,
+        st,
+        cx,
+    );
 
     let mut call_rewriter = ApplyCallSites {
         st,
@@ -173,7 +185,7 @@ pub(super) fn pass_arrays_as_slices(
 fn collect_global_info(krate: &Crate, cx: &RefactorCtxt, target: TargetInfo) -> GlobalInfo {
     let mut info = GlobalInfo::default();
     collect_aliases_from_items(&krate.items, cx, &mut info.aliases);
-    collect_globals_from_items(&krate.items, cx, target, &mut info);
+    collect_global_consts_from_items(&krate.items, cx, target, &mut info);
     info
 }
 
@@ -185,7 +197,7 @@ fn collect_aliases_from_items(
     for item in items {
         match &item.kind {
             ItemKind::TyAlias(alias) => {
-                // Constraint 6.c.ii permits TYPE_ALIAS only for a public
+                // Constraint 7.c.ii permits TYPE_ALIAS only for a public
                 // global alias.  Keeping only public aliases here also makes
                 // arbitrary private aliases fail closed.
                 if item.vis.kind.is_pub() {
@@ -202,7 +214,7 @@ fn collect_aliases_from_items(
     }
 }
 
-fn collect_globals_from_items(
+fn collect_global_consts_from_items(
     items: &[P<Item>],
     cx: &RefactorCtxt,
     target: TargetInfo,
@@ -227,43 +239,8 @@ fn collect_globals_from_items(
                     }
                 }
             }
-            ItemKind::Static(ty, _, Some(init)) => {
-                if let Some((element_ty, length)) = array_decl_type(ty) {
-                    if array_initializer(init) {
-                        let key = ArrayKey::Item(cx.node_def_id(item.id));
-                        info.arrays.insert(
-                            key,
-                            ArrayMeta {
-                                element_ty,
-                                length,
-                            },
-                        );
-                    }
-                }
-            }
-            ItemKind::ForeignMod(foreign_mod) => {
-                // C2Rust represents declarations such as
-                // `extern int array_global[10];` as foreign static arrays.
-                // They are global arrays with a statically known element type
-                // and literal length, so they satisfy the global-array part of
-                // constraint 6.a even though they have no Rust initializer.
-                for foreign_item in &foreign_mod.items {
-                    if let ForeignItemKind::Static(ty, _, _) = &foreign_item.kind {
-                        if let Some((element_ty, length)) = array_decl_type(ty) {
-                            let key = ArrayKey::Item(cx.node_def_id(foreign_item.id));
-                            info.arrays.insert(
-                                key,
-                                ArrayMeta {
-                                    element_ty,
-                                    length,
-                                },
-                            );
-                        }
-                    }
-                }
-            }
             ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
-                collect_globals_from_items(module_items, cx, target, info);
+                collect_global_consts_from_items(module_items, cx, target, info);
             }
             _ => {}
         }
@@ -324,6 +301,7 @@ fn analyze_function(
     arrays: &HashMap<ArrayKey, ArrayMeta>,
     cx: &RefactorCtxt,
     target: TargetInfo,
+    transform_public_functions: bool,
 ) -> Option<FunctionPlan> {
     let func = match &item.kind {
         ItemKind::Fn(func) => func,
@@ -331,6 +309,26 @@ fn analyze_function(
     };
     let body = func.body.as_ref()?;
     if !function_is_unsafe_extern_c(func) {
+        return None;
+    }
+
+    let is_public = item_contains_pub(item);
+    if is_public && !transform_public_functions {
+        return None;
+    }
+
+    let def_id = cx.node_def_id(item.id);
+    let (related_def_ids, foreign_decl_item_ids) = if is_public {
+        collect_public_function_linkage_group(item, func, krate, cx)?
+    } else {
+        let mut ids = HashSet::new();
+        ids.insert(def_id);
+        (ids, HashSet::new())
+    };
+
+    // Constraint 1: after the signature changes, every in-crate use of the
+    // definition and of every related foreign declaration must be a direct call.
+    if !functions_are_used_only_as_direct_callees(krate, &related_def_ids, cx) {
         return None;
     }
 
@@ -383,9 +381,9 @@ fn analyze_function(
                 continue;
             }
 
-            // Constraint 1 and the second half of constraint 5: every use of
-            // the pointer parameter must be consumed by one of the validated
-            // pointer-indexing forms inside a matching loop.
+            // Constraints 2 and 6: every use of the pointer parameter must be
+            // consumed by one of the validated pointer-indexing forms inside a
+            // matching loop.
             let allowed = loops
                 .iter()
                 .flat_map(|lp| lp.allowed_array_path_ids.iter().copied())
@@ -400,14 +398,20 @@ fn analyze_function(
                 .map(|lp| lp.length_use_id)
                 .collect::<HashSet<_>>();
             let all_length_uses = collect_local_path_uses(&**body, length_hir, cx);
-            let restore_length = all_length_uses
-                .iter()
-                .any(|id| !exempt_length_uses.contains(id));
+            let restored_length_use_ids = all_length_uses
+                .difference(&exempt_length_uses)
+                .copied()
+                .collect::<HashSet<_>>();
+            let restore_length = !restored_length_use_ids.is_empty();
+            let restored_length_name = if restore_length {
+                fresh_restored_length_name(func, body, length_index, length_hir, &length_name, cx)
+            } else {
+                length_name.clone()
+            };
 
-            let def_id = cx.node_def_id(item.id);
             let calls = match analyze_all_calls(
                 krate,
-                def_id,
+                &related_def_ids,
                 array_index,
                 length_index,
                 pointer_mutability,
@@ -425,12 +429,15 @@ fn analyze_function(
             pair_plans.push(FunctionPlan {
                 item_id: item.id,
                 def_id,
+                foreign_decl_item_ids: foreign_decl_item_ids.clone(),
                 array_index,
                 length_index,
                 array_name: array_name.clone(),
                 pointer_mutability,
                 element_ty: element_ty.clone(),
                 length_name: length_name.clone(),
+                restored_length_name,
+                restored_length_use_ids,
                 length_ty: length_param.ty.clone(),
                 length_integer_ty,
                 restore_length,
@@ -455,6 +462,209 @@ fn function_is_unsafe_extern_c(func: &rustc_ast::Fn) -> bool {
         Extern::Explicit(ref lit, _) => lit.symbol.as_str() == "C",
         _ => false,
     }
+}
+
+
+fn item_contains_pub(item: &Item) -> bool {
+    !matches!(&item.vis.kind, rustc_ast::VisibilityKind::Inherited)
+}
+
+fn collect_public_function_linkage_group(
+    item: &Item,
+    func: &rustc_ast::Fn,
+    krate: &Crate,
+    cx: &RefactorCtxt,
+) -> Option<(HashSet<DefId>, HashSet<rustc_ast::NodeId>)> {
+    let mut related_def_ids = HashSet::new();
+    related_def_ids.insert(cx.node_def_id(item.id));
+    let mut foreign_item_ids = HashSet::new();
+
+    // C2Rust definitions normally use #[no_mangle].  export_name/link_name are
+    // handled as well.  If the definition has no source-level fixed external
+    // symbol name, no foreign declaration can be related to it by this proof.
+    let definition_symbol = fixed_definition_external_symbol(item);
+    let mut valid = true;
+
+    if let Some(definition_symbol) = definition_symbol {
+        visit_nodes(krate, |candidate: &Item| {
+            if !valid {
+                return;
+            }
+            let foreign_mod = match &candidate.kind {
+                ItemKind::ForeignMod(foreign_mod) if foreign_mod_is_c(foreign_mod) => foreign_mod,
+                _ => return,
+            };
+            for foreign_item in &foreign_mod.items {
+                let foreign_fn = match &foreign_item.kind {
+                    ForeignItemKind::Fn(foreign_fn) => foreign_fn,
+                    _ => continue,
+                };
+                if foreign_external_symbol(foreign_item) != definition_symbol {
+                    continue;
+                }
+                if !function_signatures_equivalent(func, foreign_fn, cx) {
+                    valid = false;
+                    return;
+                }
+                related_def_ids.insert(cx.node_def_id(foreign_item.id));
+                foreign_item_ids.insert(foreign_item.id);
+            }
+        });
+    }
+
+    valid.then_some((related_def_ids, foreign_item_ids))
+}
+
+fn foreign_mod_is_c(foreign_mod: &rustc_ast::ForeignMod) -> bool {
+    match &foreign_mod.abi {
+        None => true,
+        Some(abi) => abi.symbol.as_str() == "C",
+    }
+}
+
+fn fixed_definition_external_symbol(item: &Item) -> Option<Symbol> {
+    let export_name = Symbol::intern("export_name");
+    if let Some(symbol) = item
+        .attrs
+        .iter()
+        .find(|attr| attr.has_name(export_name))
+        .and_then(|attr| attr.value_str())
+    {
+        return Some(symbol);
+    }
+
+    let no_mangle = Symbol::intern("no_mangle");
+    item.attrs
+        .iter()
+        .any(|attr| attr.has_name(no_mangle))
+        .then_some(item.ident.name)
+}
+
+fn foreign_external_symbol(item: &rustc_ast::ForeignItem) -> Symbol {
+    let link_name = Symbol::intern("link_name");
+    item.attrs
+        .iter()
+        .find(|attr| attr.has_name(link_name))
+        .and_then(|attr| attr.value_str())
+        .unwrap_or(item.ident.name)
+}
+
+fn function_signatures_equivalent(
+    definition: &rustc_ast::Fn,
+    declaration: &rustc_ast::Fn,
+    cx: &RefactorCtxt,
+) -> bool {
+    if definition.sig.decl.inputs.len() != declaration.sig.decl.inputs.len() {
+        return false;
+    }
+    if !definition
+        .sig
+        .decl
+        .inputs
+        .iter()
+        .zip(&declaration.sig.decl.inputs)
+        .all(|(left, right)| same_type(&left.ty, &right.ty, cx))
+    {
+        return false;
+    }
+    return_types_equivalent(&definition.sig.decl.output, &declaration.sig.decl.output, cx)
+}
+
+fn return_types_equivalent(left: &FnRetTy, right: &FnRetTy, cx: &RefactorCtxt) -> bool {
+    match (left, right) {
+        (FnRetTy::Default(_), FnRetTy::Default(_)) => true,
+        (FnRetTy::Ty(left), FnRetTy::Ty(right)) => same_type(left, right, cx),
+        (FnRetTy::Default(_), FnRetTy::Ty(ty))
+        | (FnRetTy::Ty(ty), FnRetTy::Default(_)) => {
+            matches!(&ty.kind, TyKind::Tup(types) if types.is_empty())
+        }
+    }
+}
+
+fn fresh_restored_length_name(
+    func: &rustc_ast::Fn,
+    body: &rustc_ast::Block,
+    removed_param_index: usize,
+    removed_param_hir: HirId,
+    requested: &str,
+    cx: &RefactorCtxt,
+) -> String {
+    let mut names = HashSet::<String>::new();
+
+    for (index, param) in func.sig.decl.inputs.iter().enumerate() {
+        if index != removed_param_index {
+            collect_pattern_binding_names(&param.pat, &mut names);
+        }
+    }
+
+    struct BindingCollector<'names, 'cx, 'a, 'tcx: 'a> {
+        names: &'names mut HashSet<String>,
+        removed_param_hir: HirId,
+        cx: &'cx RefactorCtxt<'a, 'tcx>,
+    }
+    impl<'ast, 'names, 'cx, 'a, 'tcx: 'a> Visitor<'ast>
+        for BindingCollector<'names, 'cx, 'a, 'tcx>
+    {
+        fn visit_pat(&mut self, pat: &'ast Pat) {
+            record_pattern_binding_name(pat, self.names);
+            visit::walk_pat(self, pat);
+        }
+
+        fn visit_expr(&mut self, expr: &'ast Expr) {
+            if !expr_resolves_to_local(expr, self.removed_param_hir, self.cx) {
+                if let Some(name) = simple_path_name(expr) {
+                    self.names.insert(name.to_string());
+                }
+            }
+            visit::walk_expr(self, expr);
+        }
+
+        fn visit_item(&mut self, item: &'ast Item) {
+            self.names.insert(item.ident.name.to_string());
+            // Nested items are separate scopes; their internal bindings cannot
+            // collide with the restored local in the enclosing function.
+        }
+    }
+
+    let mut collector = BindingCollector {
+        names: &mut names,
+        removed_param_hir,
+        cx,
+    };
+    collector.visit_block(body);
+
+    if !names.contains(requested) {
+        return requested.to_string();
+    }
+    for suffix in 0u64.. {
+        let candidate = format!("{}_{}", requested, suffix);
+        if !names.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+fn record_pattern_binding_name(pat: &Pat, names: &mut HashSet<String>) {
+    if let PatKind::Ident(_, ident, _) = &pat.kind {
+        names.insert(ident.name.to_string());
+    }
+}
+
+fn collect_pattern_binding_names(pat: &Pat, names: &mut HashSet<String>) {
+    struct Collector<'names> {
+        names: &'names mut HashSet<String>,
+    }
+
+    impl<'ast, 'names> Visitor<'ast> for Collector<'names> {
+        fn visit_pat(&mut self, pat: &'ast Pat) {
+            record_pattern_binding_name(pat, self.names);
+            visit::walk_pat(self, pat);
+        }
+    }
+
+    let mut collector = Collector { names };
+    collector.visit_pat(pat);
 }
 
 fn analyze_loop(
@@ -931,16 +1141,16 @@ fn local_is_read_only_and_unborrowed(
         .any(|capture| matches!(capture.info.capture_kind, ty::UpvarCapture::ByRef(_)))
 }
 
-fn function_is_used_only_as_direct_callee(
+fn functions_are_used_only_as_direct_callees(
     krate: &Crate,
-    target_fn: DefId,
+    target_fns: &HashSet<DefId>,
     cx: &RefactorCtxt,
 ) -> bool {
     let mut direct_callee_ids = HashSet::new();
     visit_nodes(krate, |expr: &Expr| {
         if let ExprKind::Call(callee, _) = &expr.kind {
             let callee = strip_parens(callee);
-            if matches!(cx.try_resolve_expr_hir(callee), Some(Res::Def(_, id)) if id == target_fn) {
+            if matches!(cx.try_resolve_expr_hir(callee), Some(Res::Def(_, id)) if target_fns.contains(&id)) {
                 direct_callee_ids.insert(callee.id);
             }
         }
@@ -951,7 +1161,7 @@ fn function_is_used_only_as_direct_callee(
         if !valid || !matches!(expr.kind, ExprKind::Path(..)) {
             return;
         }
-        if matches!(cx.try_resolve_expr_hir(expr), Some(Res::Def(_, id)) if id == target_fn)
+        if matches!(cx.try_resolve_expr_hir(expr), Some(Res::Def(_, id)) if target_fns.contains(&id))
             && !direct_callee_ids.contains(&expr.id)
         {
             valid = false;
@@ -962,7 +1172,7 @@ fn function_is_used_only_as_direct_callee(
 
 fn analyze_all_calls(
     krate: &Crate,
-    target_fn: DefId,
+    target_fns: &HashSet<DefId>,
     array_index: usize,
     length_index: usize,
     pointer_mutability: Mutability,
@@ -973,17 +1183,10 @@ fn analyze_all_calls(
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> Option<Vec<CallPlan>> {
-    // Changing an extern function's parameter types is only valid when every
-    // in-crate use of the item is a direct call that can be rewritten below.
-    // Function-pointer/address uses fail closed.
-    if !function_is_used_only_as_direct_callee(krate, target_fn, cx) {
-        return None;
-    }
-
     let mut all_target_call_ids = HashSet::new();
     visit_nodes(krate, |expr: &Expr| {
         if let ExprKind::Call(callee, _) = &expr.kind {
-            if matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if id == target_fn) {
+            if matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if target_fns.contains(&id)) {
                 all_target_call_ids.insert(expr.id);
             }
         }
@@ -1014,7 +1217,7 @@ fn analyze_all_calls(
                 ExprKind::Call(callee, args) => (callee, args),
                 _ => return,
             };
-            if !matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if id == target_fn) {
+            if !matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if target_fns.contains(&id)) {
                 return;
             }
             seen_call_ids.insert(expr.id);
@@ -1055,10 +1258,9 @@ fn analyze_all_calls(
                 valid = false;
                 return;
             }
-            // Constraint 6.d is checked only after all structurally valid
-            // functions have been collected, because its non-escaping exception
-            // depends on whether an earlier callee is transformed in the same
-            // pass.
+            // Constraint 7.d is checked after the structural call-site
+            // conditions.  Its earlier-call exception is derived independently
+            // from callee non-escape analysis.
             calls.push(CallPlan {
                 call_id: expr.id,
                 caller_body_id: body.id,
@@ -1304,14 +1506,14 @@ fn valid_sizeof_length_argument(
     }
 
     match outer_cast {
-        // Constraint 6.c.iii: both size_of results are cast specifically to
+        // Constraint 7.c.iii: both size_of results are cast specifically to
         // usize, then the quotient is cast to T1.
         Some(ty) => {
             ty == length_ty
                 && numerator_cast == SizeCastKind::Usize
                 && denominator_cast == SizeCastKind::Usize
         }
-        // Constraint 6.c.iv: no outer cast and T6 is exactly usize or size_t.
+        // Constraint 7.c.iv: no outer cast and T6 is exactly usize or size_t.
         // Both spellings have underlying type usize, so T1 must be usize.
         None => length_ty == IntegerType::Primitive("usize"),
     }
@@ -1407,33 +1609,274 @@ fn filter_plans_by_aliasing(
     plans: &mut Vec<FunctionPlan>,
     cx: &RefactorCtxt,
 ) {
-    loop {
-        // Every raw address expression in this set is known to be used solely
-        // as parameter_0 of a call whose callee is still a candidate for this
-        // same transformation. Such a raw pointer is allowed to stop being
-        // considered live once that earlier call has completed (constraint
-        // 6.d.i-iii).
-        let non_escaping_call_addr_ids = plans
-            .iter()
-            .flat_map(|plan| plan.calls.iter())
-            .map(|call| call.exception_addr_id)
-            .collect::<HashSet<_>>();
+    let non_escaping_call_addr_ids = collect_non_escaping_call_addr_ids(krate, cx);
+    plans.retain(|plan| {
+        function_plan_aliasing_is_safe(plan, krate, &non_escaping_call_addr_ids, cx)
+    });
+}
 
-        let previous_len = plans.len();
-        plans.retain(|plan| {
-            function_plan_aliasing_is_safe(plan, krate, &non_escaping_call_addr_ids, cx)
-        });
+fn collect_non_escaping_call_addr_ids(
+    krate: &Crate,
+    cx: &RefactorCtxt,
+) -> HashMap<rustc_ast::NodeId, Span> {
+    let mut non_escaping_params = HashSet::<(DefId, usize)>::new();
 
-        if plans.len() == previous_len {
-            break;
+    visit_nodes(krate, |item: &Item| {
+        let func = match &item.kind {
+            ItemKind::Fn(func) => func,
+            _ => return,
+        };
+        let body = match &func.body {
+            Some(body) => body,
+            None => return,
+        };
+        let def_id = cx.node_def_id(item.id);
+        for (index, param) in func.sig.decl.inputs.iter().enumerate() {
+            if !matches!(&param.ty.kind, TyKind::Ptr(_)) {
+                continue;
+            }
+            let (tracked, _, _) = match simple_binding(&param.pat, cx) {
+                Some(binding) => binding,
+                None => continue,
+            };
+            if raw_pointer_parameter_does_not_escape(body, tracked, cx) {
+                non_escaping_params.insert((def_id, index));
+            }
+        }
+    });
+
+    let foreign_to_definition = collect_foreign_definition_map(krate, cx);
+    let mut result = HashMap::new();
+    visit_nodes(krate, |expr: &Expr| {
+        let (callee, args) = match &expr.kind {
+            ExprKind::Call(callee, args) => (strip_parens(callee), args),
+            _ => return,
+        };
+        let resolved = match cx.try_resolve_expr_hir(callee) {
+            Some(Res::Def(_, id)) => id,
+            _ => return,
+        };
+        let definition = foreign_to_definition.get(&resolved).copied().unwrap_or(resolved);
+
+        for (index, arg) in args.iter().enumerate() {
+            if !non_escaping_params.contains(&(definition, index)) {
+                continue;
+            }
+            if let Some(addr_id) = direct_raw_address_argument_id(arg) {
+                result.insert(addr_id, expr.span);
+            }
+        }
+    });
+    result
+}
+
+fn collect_foreign_definition_map(
+    krate: &Crate,
+    cx: &RefactorCtxt,
+) -> HashMap<DefId, DefId> {
+    let mut result = HashMap::new();
+
+    visit_nodes(krate, |item: &Item| {
+        let foreign_mod = match &item.kind {
+            ItemKind::ForeignMod(foreign_mod) if foreign_mod_is_c(foreign_mod) => foreign_mod,
+            _ => return,
+        };
+        for foreign_item in &foreign_mod.items {
+            let foreign_fn = match &foreign_item.kind {
+                ForeignItemKind::Fn(func) => func,
+                _ => continue,
+            };
+            let foreign_symbol = foreign_external_symbol(foreign_item);
+            let mut matching_definition = None;
+            let mut ambiguous = false;
+            visit_nodes(krate, |candidate: &Item| {
+                if ambiguous {
+                    return;
+                }
+                let candidate_fn = match &candidate.kind {
+                    ItemKind::Fn(func) => func,
+                    _ => return,
+                };
+                if !item_contains_pub(candidate)
+                    || !function_is_unsafe_extern_c(candidate_fn)
+                    || fixed_definition_external_symbol(candidate) != Some(foreign_symbol)
+                    || !function_signatures_equivalent(candidate_fn, foreign_fn, cx)
+                {
+                    return;
+                }
+                let id = cx.node_def_id(candidate.id);
+                if matching_definition.replace(id).is_some() {
+                    ambiguous = true;
+                }
+            });
+            if !ambiguous {
+                if let Some(definition) = matching_definition {
+                    result.insert(cx.node_def_id(foreign_item.id), definition);
+                }
+            }
+        }
+    });
+
+    result
+}
+
+fn direct_raw_address_argument_id(expr: &Expr) -> Option<rustc_ast::NodeId> {
+    let mut expr = strip_parens(expr);
+    while let ExprKind::Cast(inner, ty) = &expr.kind {
+        if !matches!(&ty.kind, TyKind::Ptr(_)) {
+            return None;
+        }
+        expr = strip_parens(inner);
+    }
+    match &expr.kind {
+        ExprKind::AddrOf(BorrowKind::Raw, _, _) => Some(expr.id),
+        _ => None,
+    }
+}
+
+fn raw_pointer_parameter_does_not_escape(
+    body: &rustc_ast::Block,
+    tracked: HirId,
+    cx: &RefactorCtxt,
+) -> bool {
+    struct Checker<'cx, 'a, 'tcx: 'a> {
+        tracked: HirId,
+        cx: &'cx RefactorCtxt<'a, 'tcx>,
+        bad: bool,
+    }
+
+    impl<'ast, 'cx, 'a, 'tcx: 'a> Visitor<'ast> for Checker<'cx, 'a, 'tcx> {
+        fn visit_expr(&mut self, expr: &'ast Expr) {
+            if self.bad {
+                return;
+            }
+
+            // Creating any reference/raw pointer derived from the parameter is
+            // conservatively rejected: such a derived value could outlive the
+            // immediate pointed-to-value access.
+            if let ExprKind::AddrOf(_, _, operand) = &expr.kind {
+                if subtree_contains_local(operand, self.tracked, self.cx) {
+                    self.bad = true;
+                    return;
+                }
+            }
+
+            // Capturing the pointer in a closure is explicitly forbidden by
+            // constraint 7.d.iii, even if the closure body only dereferences it.
+            if matches!(expr.kind, ExprKind::Closure(..) | ExprKind::Async(..))
+                && subtree_contains_local(expr, self.tracked, self.cx)
+            {
+                self.bad = true;
+                return;
+            }
+
+            // A dereference consumes a pointer expression solely to access the
+            // pointed-to value.  Permit casts and raw-pointer derivation methods
+            // on the way to that dereference, provided their arguments do not
+            // themselves use/copy the tracked parameter.
+            if let ExprKind::Unary(rustc_ast::UnOp::Deref, pointer) = &strip_parens(expr).kind {
+                if pointer_expression_is_derived_from_local(pointer, self.tracked, self.cx) {
+                    return;
+                }
+            }
+
+            if expr_resolves_to_local(expr, self.tracked, self.cx) {
+                self.bad = true;
+                return;
+            }
+            visit::walk_expr(self, expr);
+        }
+
+        fn visit_item(&mut self, _item: &'ast Item) {
+            // Nested items cannot capture a function parameter.
         }
     }
+
+    let mut checker = Checker {
+        tracked,
+        cx,
+        bad: false,
+    };
+    checker.visit_block(body);
+    !checker.bad
+}
+
+fn pointer_expression_is_derived_from_local(
+    expr: &Expr,
+    tracked: HirId,
+    cx: &RefactorCtxt,
+) -> bool {
+    let expr = strip_parens(expr);
+    if expr_resolves_to_local(expr, tracked, cx) {
+        return true;
+    }
+    match &expr.kind {
+        ExprKind::Cast(inner, ty) if matches!(&ty.kind, TyKind::Ptr(_)) => {
+            pointer_expression_is_derived_from_local(inner, tracked, cx)
+        }
+        ExprKind::MethodCall(segment, receiver, args, _) => {
+            let method = segment.ident.name.as_str();
+            let derivation_method = matches!(
+                method,
+                "offset"
+                    | "wrapping_offset"
+                    | "add"
+                    | "wrapping_add"
+                    | "sub"
+                    | "wrapping_sub"
+                    | "byte_offset"
+                    | "wrapping_byte_offset"
+                    | "byte_add"
+                    | "wrapping_byte_add"
+                    | "byte_sub"
+                    | "wrapping_byte_sub"
+                    | "cast"
+                    | "with_addr"
+                    | "map_addr"
+            );
+            derivation_method
+                && pointer_expression_is_derived_from_local(receiver, tracked, cx)
+                && args
+                    .iter()
+                    .all(|arg| !subtree_contains_local(arg, tracked, cx))
+        }
+        _ => false,
+    }
+}
+
+fn subtree_contains_local(expr: &Expr, tracked: HirId, cx: &RefactorCtxt) -> bool {
+    struct Finder<'cx, 'a, 'tcx: 'a> {
+        tracked: HirId,
+        cx: &'cx RefactorCtxt<'a, 'tcx>,
+        found: bool,
+    }
+    impl<'ast, 'cx, 'a, 'tcx: 'a> Visitor<'ast> for Finder<'cx, 'a, 'tcx> {
+        fn visit_expr(&mut self, expr: &'ast Expr) {
+            if self.found {
+                return;
+            }
+            if expr_resolves_to_local(expr, self.tracked, self.cx) {
+                self.found = true;
+                return;
+            }
+            visit::walk_expr(self, expr);
+        }
+
+        fn visit_item(&mut self, _item: &'ast Item) {}
+    }
+    let mut finder = Finder {
+        tracked,
+        cx,
+        found: false,
+    };
+    finder.visit_expr(expr);
+    finder.found
 }
 
 fn function_plan_aliasing_is_safe(
     plan: &FunctionPlan,
     krate: &Crate,
-    non_escaping_call_addr_ids: &HashSet<rustc_ast::NodeId>,
+    non_escaping_call_addr_ids: &HashMap<rustc_ast::NodeId, Span>,
     cx: &RefactorCtxt,
 ) -> bool {
     plan.calls.iter().all(|call| {
@@ -1462,7 +1905,7 @@ fn call_array_borrow_is_safe(
     call_span: Span,
     exception_addr_id: rustc_ast::NodeId,
     pointer_mutability: Mutability,
-    non_escaping_call_addr_ids: &HashSet<rustc_ast::NodeId>,
+    non_escaping_call_addr_ids: &HashMap<rustc_ast::NodeId, Span>,
     cx: &RefactorCtxt,
 ) -> bool {
     let mut checker = ReferenceBeforeCallChecker {
@@ -1492,7 +1935,7 @@ struct ReferenceBeforeCallChecker<'cx, 'a, 'tcx: 'a> {
     call_span: Span,
     exception_addr_id: rustc_ast::NodeId,
     pointer_mutability: Mutability,
-    non_escaping_call_addr_ids: &'cx HashSet<rustc_ast::NodeId>,
+    non_escaping_call_addr_ids: &'cx HashMap<rustc_ast::NodeId, Span>,
     cx: &'cx RefactorCtxt<'a, 'tcx>,
     bad: bool,
 }
@@ -1505,8 +1948,11 @@ impl<'ast, 'cx, 'a, 'tcx: 'a> Visitor<'ast> for ReferenceBeforeCallChecker<'cx, 
 
         if let ExprKind::AddrOf(kind, mutability, operand) = &expr.kind {
             let is_current_parameter_0 = expr.id == self.exception_addr_id;
-            let is_completed_non_escaping_parameter_0 =
-                self.non_escaping_call_addr_ids.contains(&expr.id);
+            let is_completed_non_escaping_parameter_0 = self
+                .non_escaping_call_addr_ids
+                .get(&expr.id)
+                .map(|earlier_call_span| earlier_call_span.hi() <= self.call_span.lo())
+                .unwrap_or(false);
 
             if !is_current_parameter_0
                 && !is_completed_non_escaping_parameter_0
@@ -1560,7 +2006,7 @@ impl<'ast, 'cx, 'a, 'tcx: 'a> Visitor<'ast> for ReferenceBeforeCallChecker<'cx, 
 
     fn visit_item(&mut self, _item: &'ast Item) {
         // A nested item is a distinct function/item scope, not part of the
-        // calling function for constraint 6.d.
+        // calling function for constraint 7.d.
     }
 }
 
@@ -1770,12 +2216,40 @@ impl<'cx, 'a, 'tcx: 'a> MutVisitor for ApplyCallSites<'cx, 'a, 'tcx> {
 fn rewrite_planned_functions(
     items: &mut [P<Item>],
     plans_by_item: &HashMap<rustc_ast::NodeId, FunctionPlan>,
+    plans_by_foreign_item: &HashMap<rustc_ast::NodeId, FunctionPlan>,
     st: &CommandState,
     cx: &RefactorCtxt,
 ) {
     for item in items {
         if let ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) = &mut item.kind {
-            rewrite_planned_functions(module_items, plans_by_item, st, cx);
+            rewrite_planned_functions(
+                module_items,
+                plans_by_item,
+                plans_by_foreign_item,
+                st,
+                cx,
+            );
+            continue;
+        }
+
+        if let ItemKind::ForeignMod(foreign_mod) = &mut item.kind {
+            for foreign_item in &mut foreign_mod.items {
+                let plan = match plans_by_foreign_item.get(&foreign_item.id).cloned() {
+                    Some(plan) => plan,
+                    None => continue,
+                };
+                let func = match &mut foreign_item.kind {
+                    ForeignItemKind::Fn(func) => func,
+                    _ => continue,
+                };
+                rewrite_function_signature(
+                    func,
+                    &plan,
+                    st,
+                    cx,
+                    false,
+                );
+            }
             continue;
         }
 
@@ -1789,6 +2263,16 @@ fn rewrite_planned_functions(
         };
 
         if let Some(body) = &mut func.body {
+            if plan.restore_length && plan.restored_length_name != plan.length_name {
+                let mut length_rewriter = RestoredLengthUseRewriter {
+                    st,
+                    cx,
+                    ids: &plan.restored_length_use_ids,
+                    replacement_name: &plan.restored_length_name,
+                };
+                length_rewriter.visit_block(body);
+            }
+
             let mut body_rewriter = FunctionBodyRewriter {
                 st,
                 cx,
@@ -1800,14 +2284,43 @@ fn rewrite_planned_functions(
             }
         }
 
-        let slice_ty = make_slice_type(st, cx, plan.element_ty.clone(), plan.pointer_mutability);
-        if let Some(param) = func.sig.decl.inputs.get_mut(plan.array_index) {
-            param.ty = slice_ty;
+        rewrite_function_signature(func, &plan, st, cx, true);
+    }
+}
+
+fn rewrite_function_signature(
+    func: &mut rustc_ast::Fn,
+    plan: &FunctionPlan,
+    st: &CommandState,
+    cx: &RefactorCtxt,
+    normalize_binding: bool,
+) {
+    let slice_ty = make_slice_type(st, cx, plan.element_ty.clone(), plan.pointer_mutability);
+    if let Some(param) = func.sig.decl.inputs.get_mut(plan.array_index) {
+        param.ty = slice_ty;
+        if normalize_binding {
             if let PatKind::Ident(binding, _, None) = &mut param.pat.kind {
                 *binding = BindingAnnotation(ByRef::No, Mutability::Not);
             }
         }
-        func.sig.decl.inputs.remove(plan.length_index);
+    }
+    func.sig.decl.inputs.remove(plan.length_index);
+}
+
+struct RestoredLengthUseRewriter<'cx, 'a, 'tcx: 'a> {
+    st: &'cx CommandState,
+    cx: &'cx RefactorCtxt<'a, 'tcx>,
+    ids: &'cx HashSet<rustc_ast::NodeId>,
+    replacement_name: &'cx str,
+}
+
+impl<'cx, 'a, 'tcx: 'a> MutVisitor for RestoredLengthUseRewriter<'cx, 'a, 'tcx> {
+    fn visit_expr(&mut self, expr: &mut P<Expr>) {
+        if self.ids.contains(&expr.id) {
+            *expr = self.st.parse_expr(self.cx, self.replacement_name);
+            return;
+        }
+        mut_visit::noop_visit_expr(expr, self);
     }
 }
 
@@ -1945,11 +2458,14 @@ fn insert_length_restore(
     let mut mcx = MatchCtxt::new(st, cx);
     mcx.bindings.add("$T", plan.length_ty.clone());
     let source = if plan.length_integer_ty == IntegerType::Primitive("usize") {
-        format!("let {}: $T:Ty = {}.len();", plan.length_name, plan.array_name)
+        format!(
+            "let {}: $T:Ty = {}.len();",
+            plan.restored_length_name, plan.array_name
+        )
     } else {
         format!(
             "let {}: $T:Ty = {}.len() as $T:Ty;",
-            plan.length_name, plan.array_name
+            plan.restored_length_name, plan.array_name
         )
     };
     let template = mcx.parse_stmts(&source);
