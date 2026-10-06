@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "test_remove_redundant_integer_casts.h"
+#include "test_remove_redunant_integer_casts_support.h"
 #include "nested_struct.h"
 
 static void keep_variable_global_const(int variable_global_const);
@@ -225,10 +226,11 @@ void test_remove_redundant_integer_casts()
 
     // Comparison with the value returned by a function
     if (return_integer() >= -137) {volatile int keep = 0;}
-    if (return_integer() > 138) {volatile int keep = 0;}
+    if (return_integer_extern() > 138) {volatile int keep = 0;}
 
     // Passing to a function
     receive_integer(-139);
+    receive_integer_extern(140);
 
     // Return of a function
     return_integer();
@@ -240,20 +242,20 @@ static void keep_variable_global_const(int variable_global_const) {}
 
 static void assign_to_variable(int variable)
 {
-    variable = 140;
+    variable = -141;
 }
 
 static void compare_with_variable_value(int variable, const int variable_const)
 {
-    if (variable < -141) {volatile int keep = 0;}
-    if (142 <= variable_const) {volatile int keep = 0;}
+    if (variable < 142) {volatile int keep = 0;}
+    if (-143 <= variable_const) {volatile int keep = 0;}
 }
 
 static void assign_to_memory_location(int* pointer, int* const pointer_const_1, int** pointer_2d)
 {
-    *pointer = -143;
-    *pointer_const_1 = 144;
-    **pointer_2d = -145;
+    *pointer = 144;
+    *pointer_const_1 = -145;
+    **pointer_2d = 146;
 }
 
 static void compare_with_memory_location_value
@@ -264,16 +266,16 @@ static void compare_with_memory_location_value
     int** pointer_2d
 )
 {
-    if (146 != *pointer) {volatile int x = 0;}
-    if (-147 == *pointer_const_0) {volatile int x = 0;}
-    if (148 >= *pointer_const_1) {volatile int x = 0;}
-    if (-149 > **pointer_2d) {volatile int x = 0;}
+    if (-147 != *pointer) {volatile int x = 0;}
+    if (148 == *pointer_const_0) {volatile int x = 0;}
+    if (-149 >= *pointer_const_1) {volatile int x = 0;}
+    if (150 > **pointer_2d) {volatile int x = 0;}
 }
 
 static void assign_to_struct_member(outer_struct_t outer_struct)
 {
-    outer_struct.x = 150;
-    outer_struct.inner_struct.x = -151;
+    outer_struct.x = -151;
+    outer_struct.inner_struct.x = 152;
 }
 
 static void compare_with_struct_member_value
@@ -282,10 +284,10 @@ static void compare_with_struct_member_value
     const outer_struct_t outer_struct_const
 )
 {
-    if (outer_struct.x < 152) {volatile int keep = 0;}
-    if (outer_struct.inner_struct.x <= -153) {volatile int x = 0;}
-    if (outer_struct_const.x != 154) {volatile int keep = 0;}
-    if (outer_struct_const.inner_struct.x == -155) {volatile int x = 0;}
+    if (outer_struct.x < -153) {volatile int keep = 0;}
+    if (outer_struct.inner_struct.x <= 154) {volatile int x = 0;}
+    if (outer_struct_const.x != -155) {volatile int keep = 0;}
+    if (outer_struct_const.inner_struct.x == 156) {volatile int x = 0;}
 }
 
 static void assign_to_member_of_struct_dereferenced_via_pointer
@@ -294,10 +296,10 @@ static void assign_to_member_of_struct_dereferenced_via_pointer
     outer_struct_t* const outer_struct_ptr_const_1
 )
 {
-    outer_struct_ptr->x = 156;
-    outer_struct_ptr->inner_struct.x = -157;
-    outer_struct_ptr_const_1->x = 158;
-    outer_struct_ptr_const_1->inner_struct.x = -159;
+    outer_struct_ptr->x = -157;
+    outer_struct_ptr->inner_struct.x = 158;
+    outer_struct_ptr_const_1->x = -159;
+    outer_struct_ptr_const_1->inner_struct.x = 160;
 }
 
 static void compare_with_member_value_of_struct_dereferenced_via_pointer
@@ -307,17 +309,17 @@ static void compare_with_member_value_of_struct_dereferenced_via_pointer
     outer_struct_t* const outer_struct_ptr_const_1
 )
 {
-    if (outer_struct_ptr->x >= 160) {volatile int keep = 0;}
-    if (-161 > outer_struct_ptr->inner_struct.x) {volatile int x = 0;}
-    if (162 < outer_struct_ptr_const_0->x) {volatile int keep = 0;}
-    if (-163 <= outer_struct_ptr_const_0->inner_struct.x) {volatile int x = 0;}
-    if (164 != outer_struct_ptr_const_1->x) {volatile int keep = 0;}
-    if (-165 == outer_struct_ptr_const_1->inner_struct.x) {volatile int x = 0;}
+    if (outer_struct_ptr->x >= -161) {volatile int keep = 0;}
+    if (162 > outer_struct_ptr->inner_struct.x) {volatile int x = 0;}
+    if (-163 < outer_struct_ptr_const_0->x) {volatile int keep = 0;}
+    if (164 <= outer_struct_ptr_const_0->inner_struct.x) {volatile int x = 0;}
+    if (-165 != outer_struct_ptr_const_1->x) {volatile int keep = 0;}
+    if (166 == outer_struct_ptr_const_1->inner_struct.x) {volatile int x = 0;}
 }
 
 static void receive_integer(int a) {}
 
 static int return_integer()
 {
-    return 166;
+    return -167;
 }
