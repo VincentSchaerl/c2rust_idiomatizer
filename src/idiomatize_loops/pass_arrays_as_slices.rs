@@ -966,11 +966,11 @@ fn local_is_read_only_and_unborrowed(
     tracked: HirId,
     cx: &RefactorCtxt,
 ) -> bool {
-    // Constraint 2 is about writes to the parameter after it has been bound.
+    // Constraint 3 is about writes to the parameter after it has been bound.
     // ExprUseVisitor reports the initial binding of a `mut` parameter as a
     // mutation as well, so using it function-wide produces a false positive
     // for ordinary C2Rust parameters such as `mut length: i32`. Detect actual
-    // source-level writes instead. Because T1 is a primitive integer, every
+    // source-level writes instead. Because U1 is a primitive integer, every
     // indirect mutation first requires a reference/raw pointer, which is
     // rejected separately by local_has_forbidden_reference_syntax().
     struct WriteChecker<'cx, 'a, 'tcx: 'a> {
@@ -1040,7 +1040,7 @@ fn local_is_read_only_and_unborrowed(
 
     // A closure/async capture by reference creates a reference even without an
     // explicit `&length` expression in the source, so retain rustc's capture
-    // information for that part of constraint 2.
+    // information for that part of constraint 3.
     let tcx = cx.ty_ctxt();
     let hir_map = cx.hir_map();
     let parent = hir_map.get_parent_item(tracked);
@@ -1224,8 +1224,8 @@ fn match_array_argument(
         return None;
     }
     // Casts are collected outside-in, so casts[0] is the explicit final
-    // pointer type. A *mut T0 expression may be passed to a *const T0 parameter
-    // by Rust's built-in raw-pointer coercion (constraint 6.b.iii), while the
+    // pointer type. A *mut U0 expression may be passed to a *const U0 parameter
+    // by Rust's built-in raw-pointer coercion (constraint 7.b.iii), while the
     // reverse direction is not valid.
     if pointer_mutability == Mutability::Mut && casts[0].0 != Mutability::Mut {
         return None;
@@ -1411,7 +1411,7 @@ fn valid_sizeof_length_argument(
         return false;
     }
 
-    // The specification requires size_of::<T0>() != 0.  We prove that only
+    // The specification requires size_of::<U0>() != 0.  We prove that only
     // for source types for which non-zero size follows without layout queries;
     // unknown/ADT layouts therefore fail closed.
     if !type_is_known_non_zero_sized(element_ty, cx) {
@@ -1424,14 +1424,14 @@ fn valid_sizeof_length_argument(
 
     match outer_cast {
         // Constraint 7.c.iii: both size_of results are cast specifically to
-        // usize, then the quotient is cast to T1.
+        // usize, then the quotient is cast to U1.
         Some(ty) => {
             ty == length_ty
                 && numerator_cast == SizeCastKind::Usize
                 && denominator_cast == SizeCastKind::Usize
         }
-        // Constraint 7.c.iv: no outer cast and T6 is exactly usize or size_t.
-        // Both spellings have underlying type usize, so T1 must be usize.
+        // Constraint 7.c.iv: no outer cast and U5 is exactly usize or size_t.
+        // Both spellings have underlying type usize, so U1 must be usize.
         None => length_ty == IntegerType::Primitive("usize"),
     }
 }
@@ -2237,7 +2237,7 @@ impl<'plan, 'cx, 'a, 'tcx: 'a> MutVisitor for FunctionBodyRewriter<'plan, 'cx, '
         // The original pointer-access expressions in the loop body are preserved
         // by the initial transformation, however, and their NodeIds still refer
         // to the pre-rewrite HIR/typeck information. Every matching loop contains
-        // at least one such access by constraint 5, so those preserved body nodes
+        // at least one such access by constraint 6, so those preserved body nodes
         // form a stable anchor for selecting the corresponding LoopPlan.
         let loop_plan_index = match &expr.kind {
             ExprKind::ForLoop(_, _, body, _) => self

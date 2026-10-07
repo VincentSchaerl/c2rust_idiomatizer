@@ -837,7 +837,7 @@ fn stable_array_index_projection(
     target: TargetInfo,
 ) -> Option<PlaceProjection> {
     // Stable-index forms (1) and (2): an unsuffixed integer literal
-    // expression, or the double-cast form `INDEX_0 as INT_0 as usize`.
+    // expression, or the double-cast form `INDEX_0 as INDEX_TYPE_0 as usize`.
     // These forms also have a concrete index value, which is retained for
     // later static determinability.
     if let Some(value) = statically_known_array_index_value(index, target) {
