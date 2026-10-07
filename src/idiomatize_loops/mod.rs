@@ -1,25 +1,31 @@
 mod initial_transformation;
 mod iterate_arrays_idiomatically;
 mod pass_arrays_as_slices;
+mod index_type_to_usize;
+mod index_based_to_iterator_based;
 
 use initial_transformation::initial_transformation;
 use iterate_arrays_idiomatically::iterate_arrays_idiomatically;
 use pass_arrays_as_slices::pass_arrays_as_slices;
+use index_type_to_usize::index_type_to_usize;
+use index_based_to_iterator_based::index_based_to_iterator_based;
 
 use c2rust_refactor::command::{DriverCommand, Registry};
 use c2rust_refactor::driver::Phase;
 use c2rust_refactor::RefactorCtxt;
 
 use rustc_ast::ptr::P;
+use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{
-    BindingAnnotation, ByRef, Expr, ExprKind, Item, ItemKind, LitIntType, LitKind, Mutability, Pat,
-    PatKind, Ty, TyKind, UnOp,
+    BindingAnnotation, ByRef, Expr, ExprKind, IntTy, Item, ItemKind, LitIntType, LitKind, Mutability,
+    Pat, PatKind, Ty, TyKind, UintTy, UnOp,
 };
+use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
 use rustc_hir::HirId;
 use rustc_middle::ty;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct IdiomatizeLoopsOptions {
@@ -94,6 +100,12 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
                     options.transform_public_functions,
                 );
             }
+            if options.index_type_to_usize {
+                index_type_to_usize(st, cx);
+            }
+            if options.index_based_to_iterator_based {
+                index_based_to_iterator_based(st, cx);
+            }
         }))
     });
 }
@@ -130,6 +142,20 @@ fn parse_options(args: &[String]) -> IdiomatizeLoopsOptions {
 }
 
 fn validate_options(options: IdiomatizeLoopsOptions) {
+    if options.index_type_to_usize
+        && !options.iterate_arrays_idiomatically
+        && !options.pass_arrays_as_slices
+    {
+        panic!(
+            concat!(
+                "Invalid arguments for idiomatize_loops: ",
+                "index-type-to-usize=true requires ",
+                "iterate-arrays-idiomatically=true or pass-arrays-as-slices=true. ",
+                "The index-type pass only operates on loops produced by one of those passes."
+            )
+        );
+    }
+
     if options.transform_public_functions && !options.pass_arrays_as_slices {
         panic!(
             concat!(
@@ -492,25 +518,6 @@ pub(super) fn array_type_with_literal_length(ty: &Ty) -> Option<(P<Ty>, u128)> {
     }
 }
 
-pub(super) fn integer_type_from_rustc_ty(ty: ty::Ty<'_>) -> Option<IntegerType> {
-    match ty.kind() {
-        ty::TyKind::Int(ty::IntTy::I8) => Some(IntegerType::Primitive("i8")),
-        ty::TyKind::Int(ty::IntTy::I16) => Some(IntegerType::Primitive("i16")),
-        ty::TyKind::Int(ty::IntTy::I32) => Some(IntegerType::Primitive("i32")),
-        ty::TyKind::Int(ty::IntTy::I64) => Some(IntegerType::Primitive("i64")),
-        ty::TyKind::Int(ty::IntTy::I128) => Some(IntegerType::Primitive("i128")),
-        ty::TyKind::Int(ty::IntTy::Isize) => Some(IntegerType::Primitive("isize")),
-        ty::TyKind::Uint(ty::UintTy::U8) => Some(IntegerType::Primitive("u8")),
-        ty::TyKind::Uint(ty::UintTy::U16) => Some(IntegerType::Primitive("u16")),
-        ty::TyKind::Uint(ty::UintTy::U32) => Some(IntegerType::Primitive("u32")),
-        ty::TyKind::Uint(ty::UintTy::U64) => Some(IntegerType::Primitive("u64")),
-        ty::TyKind::Uint(ty::UintTy::U128) => Some(IntegerType::Primitive("u128")),
-        ty::TyKind::Uint(ty::UintTy::Usize) => Some(IntegerType::Primitive("usize")),
-        _ => None,
-    }
-}
-
-
 pub(super) fn simple_loop_binding(
     pat: &Pat,
     cx: &RefactorCtxt,
@@ -520,6 +527,117 @@ pub(super) fn simple_loop_binding(
             cx.hir_map().opt_node_to_hir_id(pat.id),
             ident.name.to_string(),
         )),
+        _ => None,
+    }
+}
+
+pub(super) fn record_pattern_binding_name(pat: &Pat, names: &mut HashSet<String>) {
+    if let PatKind::Ident(_, ident, _) = &pat.kind {
+        names.insert(ident.name.to_string());
+    }
+}
+
+pub(super) fn collect_pattern_binding_names(pat: &Pat, names: &mut HashSet<String>) {
+    struct Collector<'names> {
+        names: &'names mut HashSet<String>,
+    }
+
+    impl<'ast, 'names> Visitor<'ast> for Collector<'names> {
+        fn visit_pat(&mut self, pat: &'ast Pat) {
+            record_pattern_binding_name(pat, self.names);
+            visit::walk_pat(self, pat);
+        }
+    }
+
+    let mut collector = Collector { names };
+    collector.visit_pat(pat);
+}
+
+pub(super) fn adjusted_reference_mutability(
+    expr: &Expr,
+    cx: &RefactorCtxt,
+) -> Option<Mutability> {
+    let original = cx.opt_node_type(expr.id)?;
+    let adjusted = cx.opt_adjusted_node_type(expr.id)?;
+    if matches!(original.kind(), ty::TyKind::Ref(..)) {
+        return None;
+    }
+    match adjusted.kind() {
+        ty::TyKind::Ref(_, _, mutability) => Some(*mutability),
+        _ => None,
+    }
+}
+
+pub(super) fn fresh_name(requested: &str, names: &HashSet<String>) -> String {
+    if !names.contains(requested) {
+        return requested.to_string();
+    }
+    for suffix in 0u64.. {
+        let candidate = format!("{}_{}", requested, suffix);
+        if !names.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+pub(super) fn simple_path_name(expr: &Expr) -> Option<&str> {
+    match &strip_parens(expr).kind {
+        ExprKind::Path(None, path) if !path.is_global() && path.segments.len() == 1 => {
+            Some(path.segments[0].ident.name.as_str())
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn expr_matches_loop_binding(
+    expr: &Expr,
+    binding_hir: Option<HirId>,
+    binding_name: &str,
+    cx: &RefactorCtxt,
+) -> bool {
+    let expr = strip_parens(expr);
+    match cx.try_resolve_expr_hir(expr) {
+        Some(Res::Local(id)) => binding_hir == Some(id),
+        Some(_) => false,
+        None => simple_path_name(expr) == Some(binding_name),
+    }
+}
+
+pub(super) fn suffixed_zero_integer_type(expr: &Expr) -> Option<IntegerType> {
+    let expr = strip_parens(expr);
+    let lit = match &expr.kind {
+        ExprKind::Lit(lit) => lit,
+        _ => return None,
+    };
+    match lit.kind {
+        LitKind::Int(0, LitIntType::Signed(ty)) => Some(match ty {
+            IntTy::I8 => IntegerType::Primitive("i8"),
+            IntTy::I16 => IntegerType::Primitive("i16"),
+            IntTy::I32 => IntegerType::Primitive("i32"),
+            IntTy::I64 => IntegerType::Primitive("i64"),
+            IntTy::I128 => IntegerType::Primitive("i128"),
+            IntTy::Isize => IntegerType::Primitive("isize"),
+        }),
+        LitKind::Int(0, LitIntType::Unsigned(ty)) => Some(match ty {
+            UintTy::U8 => IntegerType::Primitive("u8"),
+            UintTy::U16 => IntegerType::Primitive("u16"),
+            UintTy::U32 => IntegerType::Primitive("u32"),
+            UintTy::U64 => IntegerType::Primitive("u64"),
+            UintTy::U128 => IntegerType::Primitive("u128"),
+            UintTy::Usize => IntegerType::Primitive("usize"),
+        }),
+        _ => None,
+    }
+}
+
+pub(super) fn array_len_receiver(expr: &Expr) -> Option<&Expr> {
+    match &strip_parens(expr).kind {
+        ExprKind::MethodCall(segment, receiver, args, _)
+            if segment.ident.name.as_str() == "len" && args.is_empty() =>
+        {
+            Some(strip_parens(receiver))
+        }
         _ => None,
     }
 }

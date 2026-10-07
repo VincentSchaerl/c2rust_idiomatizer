@@ -71,10 +71,7 @@ extern outer_struct_t* outer_struct_ptr_global;
 extern const outer_struct_t* outer_struct_ptr_global_const_0;
 static outer_struct_t* outer_struct_ptr_global_static = &outer_struct_global;
 
-enum
-{
-    type_alias_value = 0        // also stable
-};
+enum { type_alias_value = 0 };  // also stable
 
 void test_3_idiomatize_loops_initial_transformation()
 {

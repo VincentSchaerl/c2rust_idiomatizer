@@ -42,10 +42,7 @@ static outer_struct_t* iterate_array_5
 
 #define LENGTH_0 10
 
-enum
-{
-    LENGTH_1 = 10
-};
+enum { LENGTH_1 = 10 };
 
 void test_5_idiomatize_loops_pass_arrays_as_slices()
 {

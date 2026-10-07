@@ -11,10 +11,7 @@ static void iterate_array_2
 
 #define LENGTH_0 10
 
-enum
-{
-    LENGTH_1 = 10
-};
+enum { LENGTH_1 = 10 };
 
 void test_6_idiomatize_loops_pass_arrays_as_slices_support()
 {

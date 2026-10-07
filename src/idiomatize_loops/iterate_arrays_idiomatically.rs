@@ -1,8 +1,9 @@
 use super::{
     array_type_with_literal_length, collect_public_integer_consts,
-    collect_public_integer_type_aliases, integer_type_from_rustc_ty, integer_type_from_ty,
+    collect_public_integer_type_aliases, expr_matches_loop_binding, integer_type_from_ty,
     integer_type_source, integer_value_fits_type, simple_loop_binding, strip_parens,
-    unsuffixed_integer_literal_value, IntegerConstMeta, IntValue, IntegerType, TargetInfo,
+    suffixed_zero_integer_type, unsuffixed_integer_literal_value, IntegerConstMeta, IntValue,
+    IntegerType, TargetInfo,
 };
 
 use c2rust_refactor::command::CommandState;
@@ -12,8 +13,8 @@ use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{
-    BindingAnnotation, Block, ByRef, Crate, Expr, ExprKind, IntTy, Item, ItemKind, LitIntType,
-    LitKind, Local, LocalKind, Mutability, Pat, PatKind, RangeLimits, StmtKind, TyKind, UintTy,
+    BindingAnnotation, Block, ByRef, Crate, Expr, ExprKind, Item, ItemKind, Local, LocalKind,
+    Mutability, Pat, PatKind, RangeLimits, StmtKind, TyKind,
 };
 use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
@@ -315,31 +316,17 @@ fn analyze_loop(
     None
 }
 
-fn zero_start_type(expr: &Expr, cx: &RefactorCtxt) -> Option<IntegerType> {
+fn zero_start_type(expr: &Expr, _cx: &RefactorCtxt) -> Option<IntegerType> {
     let expr = strip_parens(expr);
+
+    // Constraint 1 permits exactly `0T` or `0 as T`.  The former is handled
+    // by the shared suffixed-literal helper; the latter must contain an
+    // unsuffixed zero as its operand.
+    if let Some(ty) = suffixed_zero_integer_type(expr) {
+        return Some(ty);
+    }
+
     match &expr.kind {
-        ExprKind::Lit(lit) => match lit.kind {
-            LitKind::Int(0, LitIntType::Signed(ty)) => Some(match ty {
-                IntTy::I8 => IntegerType::Primitive("i8"),
-                IntTy::I16 => IntegerType::Primitive("i16"),
-                IntTy::I32 => IntegerType::Primitive("i32"),
-                IntTy::I64 => IntegerType::Primitive("i64"),
-                IntTy::I128 => IntegerType::Primitive("i128"),
-                IntTy::Isize => IntegerType::Primitive("isize"),
-            }),
-            LitKind::Int(0, LitIntType::Unsigned(ty)) => Some(match ty {
-                UintTy::U8 => IntegerType::Primitive("u8"),
-                UintTy::U16 => IntegerType::Primitive("u16"),
-                UintTy::U32 => IntegerType::Primitive("u32"),
-                UintTy::U64 => IntegerType::Primitive("u64"),
-                UintTy::U128 => IntegerType::Primitive("u128"),
-                UintTy::Usize => IntegerType::Primitive("usize"),
-            }),
-            LitKind::Int(0, LitIntType::Unsuffixed) if lit.token_lit.suffix.is_none() => {
-                integer_type_from_rustc_ty(cx.opt_node_type(expr.id)?)
-            }
-            _ => None,
-        },
         ExprKind::Cast(inner, ty)
             if unsuffixed_integer_literal_value(strip_parens(inner))
                 == Some(IntValue::NonNegative(0)) =>
@@ -413,7 +400,7 @@ fn matches_loop_index(
     cx: &RefactorCtxt,
 ) -> bool {
     let expr = strip_parens(expr);
-    if induction_expr_matches(expr, induction_hir, induction_name, cx) {
+    if expr_matches_loop_binding(expr, induction_hir, induction_name, cx) {
         return true;
     }
 
@@ -422,29 +409,7 @@ fn matches_loop_index(
         _ => return false,
     };
     integer_type_from_ty(ty) == Some(IntegerType::Primitive("usize"))
-        && induction_expr_matches(inner, induction_hir, induction_name, cx)
-}
-
-fn induction_expr_matches(
-    expr: &Expr,
-    induction_hir: Option<HirId>,
-    induction_name: &str,
-    cx: &RefactorCtxt,
-) -> bool {
-    if let Some(hir_id) = induction_hir {
-        if matches!(cx.try_resolve_expr_hir(strip_parens(expr)), Some(Res::Local(id)) if id == hir_id)
-        {
-            return true;
-        }
-    }
-
-    matches!(
-        &strip_parens(expr).kind,
-        ExprKind::Path(None, path)
-            if !path.is_global()
-                && path.segments.len() == 1
-                && path.segments[0].ident.name.as_str() == induction_name
-    )
+        && expr_matches_loop_binding(inner, induction_hir, induction_name, cx)
 }
 
 fn valid_end_bound(
@@ -526,7 +491,10 @@ impl<'plans, 'cx, 'a, 'tcx: 'a> MutVisitor for LoopRewriter<'plans, 'cx, 'a, 'tc
 
         if let Some(plan) = plan {
             if let ExprKind::ForLoop(_, iter, _, _) = &mut expr.kind {
-                if let ExprKind::Range(_, Some(end), RangeLimits::HalfOpen) = &mut iter.kind {
+                if let ExprKind::Range(Some(start), Some(end), RangeLimits::HalfOpen) = &mut iter.kind {
+                    // The updated transformation always normalizes the range
+                    // start to the unsuffixed literal `0`.
+                    *start = self.st.parse_expr(self.cx, "0");
                     *end = make_array_len_expr(
                         self.st,
                         self.cx,

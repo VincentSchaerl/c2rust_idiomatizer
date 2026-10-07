@@ -1,7 +1,7 @@
 use super::{
-    array_type_with_literal_length, collect_public_integer_consts,
-    collect_public_integer_type_aliases, integer_type_from_ty, integer_type_range_is_subset,
-    integer_type_source, integer_value_fits_type, simple_loop_binding, strip_parens,
+    adjusted_reference_mutability, array_type_with_literal_length, collect_pattern_binding_names, collect_public_integer_consts,
+    collect_public_integer_type_aliases, fresh_name, integer_type_from_ty, integer_type_range_is_subset,
+    integer_type_source, integer_value_fits_type, record_pattern_binding_name, simple_loop_binding, simple_path_name, strip_parens,
     underlying_integer_type_from_ty, unsuffixed_integer_literal_value, IntegerConstMeta, IntValue,
     IntegerType, TargetInfo,
 };
@@ -560,38 +560,7 @@ fn fresh_restored_length_name(
     };
     collector.visit_block(body);
 
-    if !names.contains(requested) {
-        return requested.to_string();
-    }
-    for suffix in 0u64.. {
-        let candidate = format!("{}_{}", requested, suffix);
-        if !names.contains(&candidate) {
-            return candidate;
-        }
-    }
-    unreachable!()
-}
-
-fn record_pattern_binding_name(pat: &Pat, names: &mut HashSet<String>) {
-    if let PatKind::Ident(_, ident, _) = &pat.kind {
-        names.insert(ident.name.to_string());
-    }
-}
-
-fn collect_pattern_binding_names(pat: &Pat, names: &mut HashSet<String>) {
-    struct Collector<'names> {
-        names: &'names mut HashSet<String>,
-    }
-
-    impl<'ast, 'names> Visitor<'ast> for Collector<'names> {
-        fn visit_pat(&mut self, pat: &'ast Pat) {
-            record_pattern_binding_name(pat, self.names);
-            visit::walk_pat(self, pat);
-        }
-    }
-
-    let mut collector = Collector { names };
-    collector.visit_pat(pat);
+    fresh_name(requested, &names)
 }
 
 fn analyze_loop(
@@ -1982,18 +1951,6 @@ fn closure_capture_before_call_is_forbidden(
         })
 }
 
-fn adjusted_reference_mutability(expr: &Expr, cx: &RefactorCtxt) -> Option<Mutability> {
-    let original = cx.opt_node_type(expr.id)?;
-    let adjusted = cx.opt_adjusted_node_type(expr.id)?;
-    if matches!(original.kind(), ty::TyKind::Ref(..)) {
-        return None;
-    }
-    match adjusted.kind() {
-        ty::TyKind::Ref(_, _, mutability) => Some(*mutability),
-        _ => None,
-    }
-}
-
 fn root_array_key(expr: &Expr, cx: &RefactorCtxt) -> Option<ArrayKey> {
     let expr = strip_parens(expr);
     if let Some(key) = array_key_for_expr(expr, cx) {
@@ -2073,15 +2030,6 @@ fn simple_binding(pat: &Pat, cx: &RefactorCtxt) -> Option<(HirId, String, bool)>
 
 fn expr_resolves_to_local(expr: &Expr, tracked: HirId, cx: &RefactorCtxt) -> bool {
     matches!(cx.try_resolve_expr_hir(strip_parens(expr)), Some(Res::Local(id)) if id == tracked)
-}
-
-fn simple_path_name(expr: &Expr) -> Option<&str> {
-    match &strip_parens(expr).kind {
-        ExprKind::Path(None, path) if !path.is_global() && path.segments.len() == 1 => {
-            Some(path.segments[0].ident.name.as_str())
-        }
-        _ => None,
-    }
 }
 
 struct ApplyCallSites<'cx, 'a, 'tcx: 'a> {

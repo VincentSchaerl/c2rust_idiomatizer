@@ -5,20 +5,11 @@
 
 #define LENGTH_0 10
 
-enum
-{
-    LENGTH_1 = 10
-};
+enum { LENGTH_1 = 10 };
 
-enum
-{
-    LENGTH_2 = 10
-};
+enum { LENGTH_2 = 10 };
 
-enum
-{
-    LENGTH_3 = 2147483700
-};
+enum { LENGTH_3 = 2147483700 };
 
 extern int array_global_1[10];
 static int array_global_static[10];
