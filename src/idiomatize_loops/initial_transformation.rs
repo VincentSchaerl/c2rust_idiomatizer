@@ -197,23 +197,35 @@ pub(super) fn initial_transformation(
         };
         let start_for_descending = start.clone();
 
-        let normalized_stable_bound = match &bound_kind {
-            BoundKind::SameTypeCastStable => match same_type_cast_operand(&condition.bound) {
+        // Normalize N according to the new N'/N''/N''' rules. In particular:
+        // - 4.a double-cast literals become the underlying `_N0`,
+        // - 4.c cast chains around a stable T-value become `_N1`, and
+        // - 4.d cast chains from U4 become a single direct `_N2 as T`.
+        let normalized_bound = match &bound_kind {
+            BoundKind::Literal(_) => match literal_bound_operand(&condition.bound, induction_ty) {
                 Some(expr) => expr,
                 None => return,
             },
-            _ => condition.bound.clone(),
+            BoundKind::Stable => condition.bound.clone(),
+            BoundKind::SameTypeCastStable => {
+                match cast_bound_base_operand(&condition.bound, induction_ty) {
+                    Some(expr) => expr,
+                    None => return,
+                }
+            }
+            BoundKind::CastStable => {
+                match cast_bound_directly_to_t(&condition.bound, induction_ty) {
+                    Some(expr) => expr,
+                    None => return,
+                }
+            }
         };
 
-        let bound_for_ascending = match &bound_kind {
-            BoundKind::Literal(_) => normalize_bound_for_ascending(&condition.bound),
-            BoundKind::SameTypeCastStable => normalized_stable_bound.clone(),
-            BoundKind::Stable | BoundKind::CastStable => condition.bound.clone(),
-        };
+        let bound_for_ascending = normalized_bound.clone();
         let bound_for_descending_inclusive = match &bound_kind {
             BoundKind::Literal(value) => typed_literal_expr(st, cx, *value, induction_ty),
             BoundKind::Stable | BoundKind::CastStable | BoundKind::SameTypeCastStable => {
-                normalized_stable_bound.clone()
+                normalized_bound.clone()
             }
         };
         let bound_for_descending_strict = match &bound_kind {
@@ -225,7 +237,7 @@ pub(super) fn initial_transformation(
                 typed_literal_expr(st, cx, plus_one, induction_ty)
             }
             BoundKind::Stable | BoundKind::CastStable | BoundKind::SameTypeCastStable => {
-                make_add_one_expr(st, cx, normalized_stable_bound.clone())
+                make_add_one_expr(st, cx, normalized_bound.clone())
             }
         };
 
@@ -1235,7 +1247,7 @@ enum BoundKind {
 }
 
 fn classify_bound(
-    bound: &Expr,
+    bound: &P<Expr>,
     induction_ty: IntegerType,
     while_span: Span,
     loop_body_hir_ids: &[HirId],
@@ -1245,7 +1257,11 @@ fn classify_bound(
     target: TargetInfo,
     direction: Direction,
 ) -> Option<BoundKind> {
-    if let Some(value) = bound_literal_value(bound) {
+    // Constraint 4.a: besides the bare/parenthesized unsuffixed literal, C2Rust
+    // may emit `_N0 as U1 as T` (optionally parenthesized as a whole).  U1 only
+    // has to be a primitive integer type.  Per the specification we do not try
+    // to prove that the intermediate cast preserves the value.
+    if let Some(value) = bound_literal_value(bound, induction_ty) {
         if !integer_value_fits_type(value, induction_ty, target) {
             return None;
         }
@@ -1276,40 +1292,37 @@ fn classify_bound(
         }
     }
 
-    // Constraint 4.c additionally permits a redundant cast to T around an
-    // already stable T-value, with or without one surrounding pair of
-    // parentheses. Constraint 4.d permits a cast to T from a different
-    // primitive integer type, but only without the extra parentheses.
-    let (cast_expr, parenthesized) = match &bound.kind {
-        ExprKind::Cast(..) => (bound, false),
-        ExprKind::Paren(inner) if matches!(inner.kind, ExprKind::Cast(..)) => (&**inner, true),
-        _ => return None,
-    };
+    // Constraints 4.c and 4.d accept one cast to T or a two-cast chain through
+    // an arbitrary primitive integer type U2/U3.  One surrounding pair of
+    // parentheses around the complete cast expression is also accepted.
+    let cast_chain = bound_cast_chain(bound, induction_ty)?;
+    let stable_x = stable_x_value(
+        cast_chain.base,
+        while_span,
+        loop_body_hir_ids,
+        env,
+        cx,
+        target,
+    )?;
 
-    let (inner, cast_ty) = match &cast_expr.kind {
-        ExprKind::Cast(inner, cast_ty) => (inner, cast_ty),
-        _ => return None,
-    };
-    if integer_type_from_ty(cast_ty) != Some(induction_ty) {
-        return None;
-    }
-
-    let stable_x = stable_x_value(inner, while_span, loop_body_hir_ids, env, cx, target)?;
     if stable_x.value_type == induction_ty {
         if direction == Direction::DescendingStrict {
             let determined_value = statically_determinable_x_value(
                 &stable_x, preceding, env, cx, target,
             )?;
-            let plus_one = add_one(determined_value)?;
+            // If U2 exists, n is the result of `_n1 as U2`.  Do not require
+            // that this intermediate cast preserves the value; C2Rust's
+            // transpilation guarantees that property for the intended inputs.
+            let n = match cast_chain.intermediate_ty {
+                Some(intermediate_ty) => cast_integer_value(determined_value, intermediate_ty, target),
+                None => determined_value,
+            };
+            let plus_one = add_one(n)?;
             if !integer_value_fits_type(plus_one, induction_ty, target) {
                 return None;
             }
         }
         return Some(BoundKind::SameTypeCastStable);
-    }
-
-    if parenthesized {
-        return None;
     }
 
     if direction == Direction::DescendingStrict {
@@ -1319,12 +1332,19 @@ fn classify_bound(
         if !integer_value_fits_type(determined_value, stable_x.value_type, target) {
             return None;
         }
-        let cast_value = cast_integer_value(determined_value, induction_ty, target);
-        let plus_one = add_one(cast_value)?;
+        // For 4.d, n is `_n2 as T`, or `_n2 as U3 as T` when U3 is present.
+        // Again, no separate value-preservation check is imposed on U3.
+        let before_t = match cast_chain.intermediate_ty {
+            Some(intermediate_ty) => cast_integer_value(determined_value, intermediate_ty, target),
+            None => determined_value,
+        };
+        let n = cast_integer_value(before_t, induction_ty, target);
+        let plus_one = add_one(n)?;
         if !integer_value_fits_type(plus_one, induction_ty, target) {
             return None;
         }
     }
+
     Some(BoundKind::CastStable)
 }
 
@@ -2260,33 +2280,98 @@ fn statically_determinable_literal_expression_value(
         .or_else(|| integer_literal_cast_expression_value(expr, target))
 }
 
-fn bound_literal_value(expr: &Expr) -> Option<IntValue> {
-    if let Some(value) = unsuffixed_integer_literal_value(expr) {
-        return Some(value);
-    }
-    match &expr.kind {
-        ExprKind::Paren(inner) => unsuffixed_integer_literal_value(inner),
-        _ => None,
-    }
+#[derive(Clone, Copy, Debug)]
+struct BoundCastChain<'a> {
+    base: &'a P<Expr>,
+    intermediate_ty: Option<IntegerType>,
 }
 
-fn normalize_bound_for_ascending(expr: &P<Expr>) -> P<Expr> {
-    match &expr.kind {
-        ExprKind::Paren(inner) if unsuffixed_integer_literal_value(inner).is_some() => inner.clone(),
-        _ => expr.clone(),
-    }
-}
-
-fn same_type_cast_operand(expr: &P<Expr>) -> Option<P<Expr>> {
+fn bound_cast_chain<'a>(
+    expr: &'a P<Expr>,
+    induction_ty: IntegerType,
+) -> Option<BoundCastChain<'a>> {
     let cast_expr = match &expr.kind {
-        ExprKind::Cast(..) => &**expr,
-        ExprKind::Paren(inner) => &**inner,
+        ExprKind::Cast(..) => expr,
+        ExprKind::Paren(inner) if matches!(inner.kind, ExprKind::Cast(..)) => inner,
         _ => return None,
     };
-    match &cast_expr.kind {
-        ExprKind::Cast(inner, _) => Some(inner.clone()),
-        _ => None,
+
+    let (inner, outer_ty) = match &cast_expr.kind {
+        ExprKind::Cast(inner, outer_ty) => (inner, outer_ty),
+        _ => return None,
+    };
+    if integer_type_from_ty(outer_ty) != Some(induction_ty) {
+        return None;
     }
+
+    match &inner.kind {
+        ExprKind::Cast(base, intermediate_ty) => Some(BoundCastChain {
+            base,
+            intermediate_ty: Some(integer_type_from_ty(intermediate_ty)?),
+        }),
+        _ => Some(BoundCastChain {
+            base: inner,
+            intermediate_ty: None,
+        }),
+    }
+}
+
+fn bound_literal_value(expr: &P<Expr>, induction_ty: IntegerType) -> Option<IntValue> {
+    let unparenthesized = match &expr.kind {
+        ExprKind::Paren(inner) => inner,
+        _ => expr,
+    };
+
+    if let Some(value) = unsuffixed_integer_literal_value(unparenthesized) {
+        return Some(value);
+    }
+
+    // Constraint 4.a permits the casted literal only in the two-cast form
+    // `_N0 as U1 as T` (optionally parenthesized as a whole).
+    let chain = bound_cast_chain(expr, induction_ty)?;
+    chain.intermediate_ty?;
+    unsuffixed_integer_literal_value(chain.base)
+}
+
+fn literal_bound_operand(expr: &P<Expr>, induction_ty: IntegerType) -> Option<P<Expr>> {
+    let unparenthesized = match &expr.kind {
+        ExprKind::Paren(inner) => inner,
+        _ => expr,
+    };
+
+    if unsuffixed_integer_literal_value(unparenthesized).is_some() {
+        return Some(unparenthesized.clone());
+    }
+
+    let chain = bound_cast_chain(expr, induction_ty)?;
+    chain.intermediate_ty?;
+    if unsuffixed_integer_literal_value(chain.base).is_none() {
+        return None;
+    }
+    Some(chain.base.clone())
+}
+
+fn cast_bound_base_operand(expr: &P<Expr>, induction_ty: IntegerType) -> Option<P<Expr>> {
+    Some(bound_cast_chain(expr, induction_ty)?.base.clone())
+}
+
+fn cast_bound_directly_to_t(expr: &P<Expr>, induction_ty: IntegerType) -> Option<P<Expr>> {
+    let _ = bound_cast_chain(expr, induction_ty)?;
+
+    let mut direct = match &expr.kind {
+        ExprKind::Cast(..) => expr.clone(),
+        ExprKind::Paren(inner) if matches!(inner.kind, ExprKind::Cast(..)) => inner.clone(),
+        _ => return None,
+    };
+
+    let inner = match &mut direct.kind {
+        ExprKind::Cast(inner, _) => inner,
+        _ => return None,
+    };
+    if let ExprKind::Cast(base, _) = &inner.kind {
+        *inner = base.clone();
+    }
+    Some(direct)
 }
 
 fn strip_parentheses(mut expr: &Expr) -> &Expr {
