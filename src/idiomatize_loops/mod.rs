@@ -112,6 +112,8 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
 
 fn parse_options(args: &[String]) -> IdiomatizeLoopsOptions {
     let mut options = IdiomatizeLoopsOptions::default();
+    let mut transform_public_functions_explicit = false;
+    let mut index_type_to_usize_explicit = false;
     let mut index_based_to_iterator_based_explicit = false;
 
     for arg in args {
@@ -123,8 +125,10 @@ fn parse_options(args: &[String]) -> IdiomatizeLoopsOptions {
         } else if let Some(value) = arg.strip_prefix("transform-public-functions=") {
             options.transform_public_functions =
                 parse_bool_arg("transform-public-functions", value);
+            transform_public_functions_explicit = true;
         } else if let Some(value) = arg.strip_prefix("index-type-to-usize=") {
             options.index_type_to_usize = parse_bool_arg("index-type-to-usize", value);
+            index_type_to_usize_explicit = true;
         } else if let Some(value) = arg.strip_prefix("index-based-to-iterator-based=") {
             options.index_based_to_iterator_based =
                 parse_bool_arg("index-based-to-iterator-based", value);
@@ -134,7 +138,21 @@ fn parse_options(args: &[String]) -> IdiomatizeLoopsOptions {
         }
     }
 
-    if !index_based_to_iterator_based_explicit && !options.index_type_to_usize {
+    if !transform_public_functions_explicit && !options.pass_arrays_as_slices {
+        options.transform_public_functions = false;
+    }
+
+    if !index_type_to_usize_explicit
+        && !options.iterate_arrays_idiomatically
+        && !options.pass_arrays_as_slices
+    {
+        options.index_type_to_usize = false;
+    }
+
+    if !index_based_to_iterator_based_explicit
+        && ((!options.iterate_arrays_idiomatically && !options.pass_arrays_as_slices)
+            || !options.index_type_to_usize)
+    {
         options.index_based_to_iterator_based = false;
     }
 
