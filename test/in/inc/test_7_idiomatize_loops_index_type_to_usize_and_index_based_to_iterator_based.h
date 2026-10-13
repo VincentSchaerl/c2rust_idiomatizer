@@ -1,0 +1,3 @@
+#pragma once
+
+void test_7_idiomatize_loops_index_type_to_usize_and_index_based_to_iterator_based();

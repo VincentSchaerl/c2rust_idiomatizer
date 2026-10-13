@@ -4,19 +4,15 @@
 #include "test_5_idiomatize_loops_pass_arrays_as_slices.h"
 #include "nested_struct.h"
 
+static void receive_array(int array[]);
+
 static void iterate_array_0
 (
     int array[],
     int length
 );
 
-static void iterate_array_2
-(
-    int array[],
-    int length
-);
-
-static int iterate_array_3
+static int iterate_array_1
 (
     int arg0,
     size_t length,
@@ -24,20 +20,26 @@ static int iterate_array_3
     char arg1
 );
 
-static outer_struct_t iterate_array_4
+static outer_struct_t iterate_array_2
 (
     int array[const],
     outer_struct_t arg0,
     const unsigned char length
 );
 
-static outer_struct_t* iterate_array_5
+static outer_struct_t* iterate_array_3
 (
     int arg0,
     const int64_t length,
     char arg1,
     const int array[const],
     outer_struct_t* arg2
+);
+
+static void iterate_array_5
+(
+    int array[],
+    int length
 );
 
 #define LENGTH_0 10
@@ -53,76 +55,55 @@ void test_5_idiomatize_loops_pass_arrays_as_slices()
     outer_struct_t outer_struct;
     outer_struct_t* outer_struct_ptr;
 
-    iterate_array_0(array, 9);
+    receive_array(array);
 
-    iterate_array_1(array, 10);
+    iterate_array_0(array, 10);
+    iterate_array_0(array, LENGTH_0);
+    iterate_array_0(array, LENGTH_1);
+    iterate_array_0(array, sizeof(array) / sizeof(array[0]));
 
-    iterate_array_2(array, 10);
-    iterate_array_2(array, LENGTH_0);
-    iterate_array_2(array, LENGTH_1);
-    iterate_array_2(array, sizeof(array) / sizeof(array[0]));
+    iterate_array_1(_int, 10, array, _char);
+    iterate_array_1(_int, LENGTH_0, array, _char);
+    iterate_array_1(_int, LENGTH_1, array, _char);
+    iterate_array_1(_int, sizeof(array) / sizeof(array[0]), array, _char);
+    iterate_array_1(_int, 10, array_const, _char);
+    iterate_array_1(_int, LENGTH_0, array_const, _char);
+    iterate_array_1(_int, LENGTH_1, array_const, _char);
+    iterate_array_1(_int, sizeof(array_const) / sizeof(array_const[0]), array_const, _char);
 
-    iterate_array_3(_int, 10, array, _char);
-    iterate_array_3(_int, LENGTH_0, array, _char);
-    iterate_array_3(_int, LENGTH_1, array, _char);
-    iterate_array_3(_int, sizeof(array) / sizeof(array[0]), array, _char);
-    iterate_array_3(_int, 10, array_const, _char);
-    iterate_array_3(_int, LENGTH_0, array_const, _char);
-    iterate_array_3(_int, LENGTH_1, array_const, _char);
-    iterate_array_3(_int, sizeof(array_const) / sizeof(array_const[0]), array_const, _char);
+    iterate_array_2(array, outer_struct, 10);
+    iterate_array_2(array, outer_struct, LENGTH_0);
+    iterate_array_2(array, outer_struct, LENGTH_1);
+    iterate_array_2(array, outer_struct, sizeof(array) / sizeof(array[0]));
 
-    iterate_array_4(array, outer_struct, 10);
-    iterate_array_4(array, outer_struct, LENGTH_0);
-    iterate_array_4(array, outer_struct, LENGTH_1);
-    iterate_array_4(array, outer_struct, sizeof(array) / sizeof(array[0]));
+    iterate_array_3(_int, 10, _char, array, outer_struct_ptr);
+    iterate_array_3(_int, LENGTH_0, _char, array, outer_struct_ptr);
+    iterate_array_3(_int, LENGTH_1, _char, array, outer_struct_ptr);
+    iterate_array_3(_int, sizeof(array) / sizeof(array[0]), _char, array, outer_struct_ptr);
+    iterate_array_3(_int, 10, _char, array_const, outer_struct_ptr);
+    iterate_array_3(_int, LENGTH_0, _char, array_const, outer_struct_ptr);
+    iterate_array_3(_int, LENGTH_1, _char, array_const, outer_struct_ptr);
+    iterate_array_3(_int, sizeof(array_const) / sizeof(array_const[0]), _char, array_const, outer_struct_ptr);
 
-    iterate_array_5(_int, 10, _char, array, outer_struct_ptr);
-    iterate_array_5(_int, LENGTH_0, _char, array, outer_struct_ptr);
-    iterate_array_5(_int, LENGTH_1, _char, array, outer_struct_ptr);
-    iterate_array_5(_int, sizeof(array) / sizeof(array[0]), _char, array, outer_struct_ptr);
-    iterate_array_5(_int, 10, _char, array_const, outer_struct_ptr);
-    iterate_array_5(_int, LENGTH_0, _char, array_const, outer_struct_ptr);
-    iterate_array_5(_int, LENGTH_1, _char, array_const, outer_struct_ptr);
-    iterate_array_5(_int, sizeof(array_const) / sizeof(array_const[0]), _char, array_const, outer_struct_ptr);
+    iterate_array_4(array, 10);
+    iterate_array_4(array, LENGTH_0);
+    iterate_array_4(array, LENGTH_1);
+    iterate_array_4(array, sizeof(array) / sizeof(array[0]));
+    iterate_array_4(array_const, 10);
+    iterate_array_4(array_const, LENGTH_0);
+    iterate_array_4(array_const, LENGTH_1);
+    iterate_array_4(array_const, sizeof(array_const) / sizeof(array_const[0]));
+
+    iterate_array_5(array, 9);
 
     iterate_array_6(array, 10);
-    iterate_array_6(array, LENGTH_0);
-    iterate_array_6(array, LENGTH_1);
-    iterate_array_6(array, sizeof(array) / sizeof(array[0]));
-    iterate_array_6(array_const, 10);
-    iterate_array_6(array_const, LENGTH_0);
-    iterate_array_6(array_const, LENGTH_1);
-    iterate_array_6(array_const, sizeof(array_const) / sizeof(array_const[0]));
 
     printf("End of test_5_idiomatize_loops_pass_arrays_as_slices().\n");
 }
 
+static void receive_array(int array[]) {}
+
 static void iterate_array_0
-(
-    int array[],
-    int length
-)
-{
-    for (int f_0 = 0; f_0 < length; f_0++)
-    {
-        array[f_0] = f_0;
-    }
-}
-
-
-void iterate_array_1
-(
-    int array[],
-    int length
-)
-{
-    for (int f_1 = 0; f_1 < length; f_1++)
-    {
-        array[f_1] = f_1;
-    }
-}
-
-static void iterate_array_2
 (
     int array[],
     int length
@@ -138,7 +119,7 @@ static void iterate_array_2
     }
 }
 
-static int iterate_array_3
+static int iterate_array_1
 (
     int arg0,
     size_t length,
@@ -158,7 +139,7 @@ static int iterate_array_3
     return 0;
 }
 
-static outer_struct_t iterate_array_4
+static outer_struct_t iterate_array_2
 (
     int array[const],
     outer_struct_t arg0,
@@ -176,7 +157,7 @@ static outer_struct_t iterate_array_4
     return arg0;
 }
 
-static outer_struct_t* iterate_array_5
+static outer_struct_t* iterate_array_3
 (
     int arg0,
     const int64_t length,
@@ -197,7 +178,7 @@ static outer_struct_t* iterate_array_5
     return arg2;
 }
 
-void iterate_array_6
+void iterate_array_4
 (
     const int array[],
     int length
@@ -211,5 +192,29 @@ void iterate_array_6
     for (int i_9 = 0; i_9 < length; i_9++)
     {
         array_clone[i_9] = array[i_9];
+    }
+}
+
+static void iterate_array_5
+(
+    int array[],
+    int length
+)
+{
+    for (int f_0 = 0; f_0 < length; f_0++)
+    {
+        array[f_0] = f_0;
+    }
+}
+
+void iterate_array_6
+(
+    int array[],
+    int length
+)
+{
+    for (int f_1 = 0; f_1 < length; f_1++)
+    {
+        array[f_1] = f_1;
     }
 }

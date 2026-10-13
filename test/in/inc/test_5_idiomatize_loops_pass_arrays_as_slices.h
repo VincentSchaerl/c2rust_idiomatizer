@@ -2,14 +2,14 @@
 
 void test_5_idiomatize_loops_pass_arrays_as_slices();
 
-void iterate_array_1
+void iterate_array_4
 (
-    int array[],
+    const int array[],
     int length
 );
 
 void iterate_array_6
 (
-    const int array[],
+    int array[],
     int length
 );

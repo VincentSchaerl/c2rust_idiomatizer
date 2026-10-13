@@ -3,11 +3,11 @@
 #include "test_6_idiomatize_loops_pass_arrays_as_slices_support.h"
 #include "test_5_idiomatize_loops_pass_arrays_as_slices.h"
 
-static void iterate_array_2
+static void iterate_array_0
 (
     int array[],
     int length
-) {};
+);
 
 #define LENGTH_0 10
 
@@ -18,18 +18,24 @@ void test_6_idiomatize_loops_pass_arrays_as_slices_support()
     int array[10];
     const int array_const[10];
 
-    iterate_array_1(array, 9);
+    iterate_array_0(array, 9);
 
-    iterate_array_2(array, 9);
+    iterate_array_4(array, 10);
+    iterate_array_4(array, LENGTH_0);
+    iterate_array_4(array, LENGTH_1);
+    iterate_array_4(array, sizeof(array) / sizeof(array[0]));
+    iterate_array_4(array_const, 10);
+    iterate_array_4(array_const, LENGTH_0);
+    iterate_array_4(array_const, LENGTH_1);
+    iterate_array_4(array_const, sizeof(array_const) / sizeof(array_const[0]));
 
-    iterate_array_6(array, 10);
-    iterate_array_6(array, LENGTH_0);
-    iterate_array_6(array, LENGTH_1);
-    iterate_array_6(array, sizeof(array) / sizeof(array[0]));
-    iterate_array_6(array_const, 10);
-    iterate_array_6(array_const, LENGTH_0);
-    iterate_array_6(array_const, LENGTH_1);
-    iterate_array_6(array_const, sizeof(array_const) / sizeof(array_const[0]));
+    iterate_array_6(array, 9);
 
     printf("End of test_6_idiomatize_loops_pass_arrays_as_slices_support().\n");
 }
+
+static void iterate_array_0
+(
+    int array[],
+    int length
+) {}
