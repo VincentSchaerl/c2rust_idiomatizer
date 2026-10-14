@@ -4,3 +4,6 @@
 [submodule "benchmarking/benchmarks/urlparser"]
 	path = benchmarking/benchmarks/urlparser
 	url = https://github.com/jwerle/url.h.git
+[submodule "benchmarking/benchmarks/bzip2"]
+	path = benchmarking/benchmarks/bzip2
+	url = git://sourceware.org/git/bzip2.git

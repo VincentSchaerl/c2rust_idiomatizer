@@ -48,6 +48,7 @@ results_file = runner_dir / "_results.txt"
 #   make_runs_binary: True if the Makefile target also runs the C executable
 #   executable: executable path relative to the benchmark root, if not run by make
 #   main_module: stem of the C file defining main() (e.g. src/main.c -> "main")
+#   run_args: optional command-line arguments for the transpiled/refactored binary
 BENCHMARKS = [
     {
         "name": "test",
@@ -65,6 +66,15 @@ BENCHMARKS = [
         "make_target": "url-test",
         "make_runs_binary": True,
         "main_module": "test",
+    },
+    {
+        "name": "bzip2",
+        "path": benchmarks_dir / "bzip2",
+        "kind": "binary",
+        "make_target": "test",  # Builds bzip2 and verifies compression/decompression.
+        "make_runs_binary": True,
+        "main_module": "bzip2",  # bzip2.c
+        "run_args": ["--help"],  # CLI smoke test; avoids waiting for stdin.
     },
 ]
 
@@ -176,6 +186,12 @@ def validate_benchmark_config(name: str, config: dict) -> None:
                     f"Benchmark '{name}': executable is required when "
                     "make_runs_binary is False"
                 )
+
+        run_args = config.get("run_args", [])
+        if not isinstance(run_args, list) or not all(isinstance(arg, str) for arg in run_args):
+            raise RuntimeError(
+                f"Benchmark '{name}': run_args must be a list of strings"
+            )
 
 
 def select_benchmarks() -> list[dict]:
@@ -296,9 +312,14 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
     # Binaries can be run; library crates should be built instead.
     cargo_action = "run" if kind == "binary" else "build"
     stage_action = "execution" if kind == "binary" else "build"
+    rust_run_args = (
+        ["--", *config["run_args"]]
+        if kind == "binary" and config.get("run_args")
+        else []
+    )
     run_step(
         f"Transpiled Rust {stage_action}",
-        ["cargo", cargo_action, "--manifest-path", str(transpile_dir / "Cargo.toml")],
+        ["cargo", cargo_action, "--manifest-path", str(transpile_dir / "Cargo.toml"), *rust_run_args],
         cwd=transpile_dir,
         env={**plain_tool_env(), "RUSTFLAGS": "-Awarnings"},
     )
@@ -333,7 +354,7 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
     )
     run_step(
         f"Refactored Rust {stage_action}",
-        ["cargo", cargo_action, "--manifest-path", str(refactor_dir / "Cargo.toml")],
+        ["cargo", cargo_action, "--manifest-path", str(refactor_dir / "Cargo.toml"), *rust_run_args],
         cwd=refactor_dir,
         env={**plain_tool_env(), "RUSTFLAGS": "-Awarnings"},
     )
