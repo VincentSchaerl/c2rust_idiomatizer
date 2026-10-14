@@ -1,3 +1,6 @@
 [submodule "lib/c2rust"]
 	path = lib/c2rust
 	url = https://github.com/immunant/c2rust.git
+[submodule "benchmarking/benchmarks/urlparser"]
+	path = benchmarking/benchmarks/urlparser
+	url = https://github.com/jwerle/url.h.git
