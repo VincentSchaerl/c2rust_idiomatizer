@@ -76,6 +76,14 @@ BENCHMARKS = [
         "main_module": "bzip2",  # bzip2.c
         "run_args": ["--help"],  # CLI smoke test; avoids waiting for stdin.
     },
+    {
+        "name": "genann",
+        "path": benchmarks_dir / "genann",
+        "kind": "binary",
+        "make_target": "check",  # Builds and executes genann's C test suite.
+        "make_runs_binary": True,
+        "main_module": "test",  # test.c
+    },
 ]
 
 REFACTOR_COMMANDS = (

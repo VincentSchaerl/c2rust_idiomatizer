@@ -7,3 +7,6 @@
 [submodule "benchmarking/benchmarks/bzip2"]
 	path = benchmarking/benchmarks/bzip2
 	url = git://sourceware.org/git/bzip2.git
+[submodule "benchmarking/benchmarks/genann"]
+	path = benchmarking/benchmarks/genann
+	url = https://github.com/codeplea/genann.git
