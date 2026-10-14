@@ -10,3 +10,6 @@
 [submodule "benchmarking/benchmarks/genann"]
 	path = benchmarking/benchmarks/genann
 	url = https://github.com/codeplea/genann.git
+[submodule "benchmarking/benchmarks/buffer"]
+	path = benchmarking/benchmarks/buffer
+	url = https://github.com/clibs/buffer

@@ -43,6 +43,7 @@ results_file = runner_dir / "_results.txt"
 #   "library" -> transpile with --emit-build-files; cargo build
 #
 # make_target: Makefile target to build, or None for the default target.
+# clean_target: Makefile cleanup target (default: "clean"), or None to skip cleaning.
 #
 # Binary-only fields:
 #   make_runs_binary: True if the Makefile target also runs the C executable
@@ -81,6 +82,15 @@ BENCHMARKS = [
         "path": benchmarks_dir / "genann",
         "kind": "binary",
         "make_target": "check",  # Builds and executes genann's C test suite.
+        "make_runs_binary": True,
+        "main_module": "test",  # test.c
+    },
+    {
+        "name": "buffer",
+        "path": benchmarks_dir / "buffer",
+        "kind": "binary",
+        "make_target": "test",  # Builds and runs the C test executable.
+        "clean_target": None,  # Upstream Makefile has no clean target; test is .PHONY.
         "make_runs_binary": True,
         "main_module": "test",  # test.c
     },
@@ -176,6 +186,10 @@ def validate_benchmark_config(name: str, config: dict) -> None:
     if target is not None and (not isinstance(target, str) or not target):
         raise RuntimeError(f"Benchmark '{name}': make_target must be a name or None")
 
+    clean_target = config.get("clean_target", "clean")
+    if clean_target is not None and (not isinstance(clean_target, str) or not clean_target):
+        raise RuntimeError(f"Benchmark '{name}': clean_target must be a name or None")
+
     if kind == "binary":
         runs = config.get("make_runs_binary")
         if not isinstance(runs, bool):
@@ -268,7 +282,11 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
     shutil.copytree(benchmark, input_dir, dirs_exist_ok=True)
 
     # Build original C project, and run it when it is an executable benchmark.
-    run_step("C clean", ["make", "-C", str(input_dir), "clean"])
+    clean_target = config.get("clean_target", "clean")
+    if clean_target is not None:
+        run_step("C clean", ["make", "-C", str(input_dir), clean_target])
+    else:
+        print("  [SKIP] C clean (no clean target)", flush=True)
     if kind == "binary" and config["make_runs_binary"]:
         run_step("C build and execution (Makefile)", make_command)
     else:
@@ -282,10 +300,15 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
             )
 
     # Bear must capture a fresh compilation for C2Rust and future C analysis.
-    run_step(
-        "C clean before Bear",
-        ["make", "-C", str(input_dir), "clean"],
-    )
+    # For targets that always recompile (e.g. buffer's .PHONY test), a clean
+    # target is unnecessary for Bear to observe the compilation commands.
+    if clean_target is not None:
+        run_step(
+            "C clean before Bear",
+            ["make", "-C", str(input_dir), clean_target],
+        )
+    else:
+        print("  [SKIP] C clean before Bear (no clean target)", flush=True)
     compile_commands = input_dir / "compile_commands.json"
     run_step(
         "Compilation database generation",
