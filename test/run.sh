@@ -8,6 +8,8 @@ project_root="$(cd "$test_dir/.." && pwd)"
 c2rust_dir="$project_root/lib/c2rust/target/debug"
 plugin_dir="$project_root/target/debug"
 
+cargo build --manifest-path "$project_root/Cargo.toml"
+
 rm -f "$test_dir/in/compile_commands.json"
 rm -rf "$test_dir/out/"*
 mkdir -p "$test_dir/out/transpile"

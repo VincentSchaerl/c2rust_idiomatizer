@@ -1,0 +1,11 @@
+[package]
+name = "rust_metrics"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rust_metrics"
+path = "src/main.rs"
+
+# rustc_private crates are supplied by rustc-dev from the pinned nightly.
+[dependencies]
