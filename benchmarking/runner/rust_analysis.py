@@ -204,10 +204,9 @@ def format_summary(results: dict[str, dict]) -> str:
         for metric, label in labels:
             a, b = (versions[k][metric] for k in ("transpiled", "refactored"))
             def fmt(value):
-                if value is None:
-                    return "N/A"
                 if metric == "for_loop_ratio":
-                    return f"{value:.2f}%"
+                    rust_loops, c_loops = value
+                    return f"{rust_loops}/{c_loops}"
                 return f"{value:,}"
             lines.append(f"{label:35} {fmt(a):>14} {fmt(b):>14}")
     return "\n".join(lines)

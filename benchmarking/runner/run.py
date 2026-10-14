@@ -397,10 +397,9 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
     print("  [OK] Refactored Rust analysis", flush=True)
 
     for metrics in (transpiled_metrics, refactored_metrics):
-        metrics["for_loop_ratio"] = (
-            100.0 * metrics["for_loops"] / c_for_loops
-            if c_for_loops else None
-        )
+        # Preserve both loop counts; display them as "Rust / original C".
+        # This remains meaningful even when the C count is zero.
+        metrics["for_loop_ratio"] = (metrics["for_loops"], c_for_loops)
 
     print(f"=== Completed: {name} ===", flush=True)
     return {"transpiled": transpiled_metrics, "refactored": refactored_metrics}
