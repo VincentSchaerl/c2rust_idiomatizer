@@ -127,7 +127,7 @@ def analyze_rust_project(project: Path, analyzer_exe: Path) -> dict:
         wrapper_env["RUST_METRICS_OUTPUT_DIR"] = str(report_dir.resolve())
         wrapper_env["RUST_METRICS_SYSROOT"] = str(_nightly_sysroot())
         _execute(
-            ["cargo", f"+{NIGHTLY}", "check", "--manifest-path", manifest,
+            ["cargo", f"+{NIGHTLY}", "check", "--release", "--manifest-path", manifest,
              "--jobs", "1"],
             project, wrapper_env,
         )
@@ -173,41 +173,11 @@ def analyze_rust_project(project: Path, analyzer_exe: Path) -> dict:
 def build_rust_analyzer(source: Path) -> Path:
     """Compile the rustc_private analyzer with the pinned nightly."""
     _execute(
-        ["cargo", f"+{NIGHTLY}", "build", "--manifest-path", str(source / "Cargo.toml")],
+        ["cargo", f"+{NIGHTLY}", "build", "--release",
+         "--manifest-path", str(source / "Cargo.toml")],
         source, _analyzer_env(linking=True),
     )
-    exe = source / "target" / "debug" / "rust_metrics"
+    exe = source / "target" / "release" / "rust_metrics"
     if not exe.is_file():
         raise RustAnalysisError(f"Rust analyzer executable missing: {exe}")
     return exe
-
-
-def format_summary(results: dict[str, dict]) -> str:
-    """Return exactly the metric tables to print and save in _results.txt."""
-    labels = [
-        ("characters", "Characters of code"),
-        ("c_type_occurrences", "C FFI type occurrences"),
-        ("casts", "Casts"),
-        ("for_loop_ratio", "For-loop ratio"),
-        ("raw_pointer_parameters", "Raw pointer parameters"),
-        ("raw_pointer_arithmetic", "Raw pointer arithmetic operations"),
-        ("raw_pointer_dereferences", "Raw pointer dereferences"),
-        ("indexing_operations", "Indexing operations"),
-    ]
-    lines = []
-    for name, versions in results.items():
-        if lines:
-            lines.append("")
-        lines.append(f"=== Benchmark: {name} ===")
-        lines.append("")
-        lines.append(f"{'Metric':35} {'Transpiled':>14} {'Refactored':>14}")
-        lines.append("-" * 66)
-        for metric, label in labels:
-            a, b = (versions[k][metric] for k in ("transpiled", "refactored"))
-            def fmt(value):
-                if metric == "for_loop_ratio":
-                    rust_loops, c_loops = value
-                    return f"{rust_loops}/{c_loops}"
-                return f"{value:,}"
-            lines.append(f"{label:35} {fmt(a):>14} {fmt(b):>14}")
-    return "\n".join(lines)

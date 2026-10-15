@@ -1,6 +1,5 @@
 /benchmarking/runner/__pycache__/
-/benchamrking/runner/_outputs.txt
-/benchmarking/runner/_results.txt
+/benchmarking/runner/_results/
 /benchmarking/runner/_temp/
 /benchmarking/runner/rust_metrics/target/
 /target/

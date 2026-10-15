@@ -13,3 +13,6 @@
 [submodule "benchmarking/benchmarks/buffer"]
 	path = benchmarking/benchmarks/buffer
 	url = https://github.com/clibs/buffer
+[submodule "benchmarking/benchmarks/PUBLIC-Test-Corpus"]
+	path = benchmarking/benchmarks/PUBLIC-Test-Corpus
+	url = https://github.com/DARPA-TRACTOR-Program/PUBLIC-Test-Corpus.git
