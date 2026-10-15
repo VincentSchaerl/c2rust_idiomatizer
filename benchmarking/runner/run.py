@@ -25,14 +25,12 @@ project_root = benchmarking_dir.parent
 c2rust_dir = project_root / "lib" / "c2rust" / "target" / "debug"
 plugin_dir = project_root / "target" / "debug"
 
-# Temporary workspace, recreated for each benchmark
+# Root for benchmark-specific workspaces (_temp/<benchmark>/).
 temp_dir = runner_dir / "_temp"
-input_dir = temp_dir / "in"
-transpile_dir = temp_dir / "out" / "transpile"
-refactor_dir = temp_dir / "out" / "refactor"
 
-# Persistent text-only evaluation results
+# Persistent text-only evaluation results and binary execution outputs
 results_file = runner_dir / "_results.txt"
+outputs_file = runner_dir / "_outputs.txt"
 
 # Only benchmarks explicitly listed here are eligible for execution.
 # Each entry has a name and a source directory; the remaining fields describe
@@ -49,7 +47,7 @@ results_file = runner_dir / "_results.txt"
 #   make_runs_binary: True if the Makefile target also runs the C executable
 #   executable: executable path relative to the benchmark root, if not run by make
 #   main_module: stem of the C file defining main() (e.g. src/main.c -> "main")
-#   run_args: optional command-line arguments for the transpiled/refactored binary
+#   run_args: optional command-line arguments for C and Rust binaries
 BENCHMARKS = [
     {
         "name": "test",
@@ -72,10 +70,11 @@ BENCHMARKS = [
         "name": "bzip2",
         "path": benchmarks_dir / "bzip2",
         "kind": "binary",
-        "make_target": "test",  # Builds bzip2 and verifies compression/decompression.
-        "make_runs_binary": True,
+        "make_target": "bzip2",  # Build the executable without running make's tests.
+        "make_runs_binary": False,
+        "executable": "bzip2",
         "main_module": "bzip2",  # bzip2.c
-        "run_args": ["--help"],  # CLI smoke test; avoids waiting for stdin.
+        "run_args": ["--help"],  # Run C and Rust binaries with the same arguments.
     },
     {
         "name": "genann",
@@ -125,8 +124,8 @@ def run_step(
     *,
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
-) -> None:
-    """Hide successful commands' output; show their COMPLETE output on failure."""
+) -> str:
+    """Capture command output; only display it on failure."""
     if env is None:
         env = plain_tool_env()
     try:
@@ -147,6 +146,7 @@ def run_step(
         raise StepError(stage, command, result.stdout, result.returncode)
 
     print(f"  [OK] {stage}", flush=True)
+    return result.stdout
 
 
 def ensure_refactor_plugin() -> None:
@@ -216,12 +216,24 @@ def validate_benchmark_config(name: str, config: dict) -> None:
             )
 
 
+class BenchmarkSelectionAction(argparse.Action):
+    """Record --NAME and --NAME=true/false flags in command-line order."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        selections = getattr(namespace, self.dest, None)
+        if selections is None:
+            selections = []
+        selections.append((option_string[2:], values == "true"))
+        setattr(namespace, self.dest, selections)
+
+
 def select_benchmarks() -> list[dict]:
-    """Select registered benchmarks by --NAME, or all registered benchmarks."""
+    """Select explicitly included benchmarks, or all except exclusions."""
     registered = {}
     for config in BENCHMARKS:
         name = config.get("name")
-        if not isinstance(name, str) or not name or name.startswith("-"):
+        if (not isinstance(name, str) or not name or name.startswith("-")
+                or name in {".", ".."} or Path(name).name != name):
             raise RuntimeError(f"Invalid registered benchmark name: {name!r}")
         if name in registered:
             raise RuntimeError(f"Duplicate benchmark name in BENCHMARKS: {name}")
@@ -235,20 +247,34 @@ def select_benchmarks() -> list[dict]:
         parser.add_argument(
             f"--{name}",
             dest="selected",
-            action="append_const",
-            const=name,
-            help=f"Process the {name} benchmark",
+            action=BenchmarkSelectionAction,
+            nargs="?",
+            const="true",
+            choices=("true", "false"),
+            metavar="{true,false}",
+            help=f"Include {name} (default), or exclude it with --{name}=false",
         )
 
     args = parser.parse_args()
     if not registered:
         parser.error("No benchmarks configured in BENCHMARKS")
 
-    selected_names = (
-        list(dict.fromkeys(args.selected))
-        if args.selected
-        else list(registered)
-    )
+    flags = args.selected or []
+    # If any positive flag was passed, process only explicitly included
+    # benchmarks. With only negative flags, process all except exclusions.
+    # For repeated flags, the last value for a benchmark takes precedence.
+    final_values = {name: enabled for name, enabled in flags}
+    if any(enabled for _, enabled in flags):
+        selected_names = list(dict.fromkeys(
+            name for name, enabled in flags
+            if enabled and final_values[name]
+        ))
+    else:
+        selected_names = [
+            name for name in registered if final_values.get(name, True)
+        ]
+    if not selected_names:
+        parser.error("No benchmarks selected")
     selected = [registered[name] for name in selected_names]
     for config in selected:
         source = config.get("path")
@@ -264,17 +290,15 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
     benchmark = config["path"]
     validate_benchmark_config(name, config)
     kind = config["kind"]
+    benchmark_temp_dir = temp_dir / name
+    input_dir = benchmark_temp_dir / "in"
+    transpile_dir = benchmark_temp_dir / "out" / "transpile"
+    refactor_dir = benchmark_temp_dir / "out" / "refactor"
     make_command = ["make", "-C", str(input_dir)]
     if config.get("make_target") is not None:
         make_command.append(config["make_target"])
 
     print(f"\n=== Benchmark: {name} ({kind}) ===", flush=True)
-
-    # Keep _temp after the run for inspection; reset it before each benchmark.
-    if temp_dir.is_symlink():
-        raise RuntimeError(f"Refusing to delete symbolic link: {temp_dir}")
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
 
     input_dir.mkdir(parents=True)
     transpile_dir.mkdir(parents=True)
@@ -287,15 +311,21 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
         run_step("C clean", ["make", "-C", str(input_dir), clean_target])
     else:
         print("  [SKIP] C clean (no clean target)", flush=True)
+    original_output = ""
     if kind == "binary" and config["make_runs_binary"]:
-        run_step("C build and execution (Makefile)", make_command)
+        # The Makefile also executes the C tests. Suppress Make's command
+        # echoes and directory banners so we primarily capture program output.
+        original_output = run_step(
+            "C build and execution (Makefile)",
+            ["make", "--silent", *make_command[1:]],
+        )
     else:
         run_step("C build", make_command)
         if kind == "binary":
             executable = config["executable"]
-            run_step(
+            original_output = run_step(
                 "C execution",
-                [str(input_dir / executable)],
+                [str(input_dir / executable), *config.get("run_args", [])],
                 cwd=input_dir,
             )
 
@@ -348,9 +378,10 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
         if kind == "binary" and config.get("run_args")
         else []
     )
-    run_step(
+    transpiled_output = run_step(
         f"Transpiled Rust {stage_action}",
-        ["cargo", cargo_action, "--manifest-path", str(transpile_dir / "Cargo.toml"), *rust_run_args],
+        ["cargo", cargo_action, *(["--quiet"] if kind == "binary" else []),
+         "--manifest-path", str(transpile_dir / "Cargo.toml"), *rust_run_args],
         cwd=transpile_dir,
         env={**plain_tool_env(), "RUSTFLAGS": "-Awarnings"},
     )
@@ -383,12 +414,27 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
         ["cargo", "fmt", "--manifest-path", str(refactor_dir / "Cargo.toml")],
         cwd=refactor_dir,
     )
-    run_step(
+    refactored_output = run_step(
         f"Refactored Rust {stage_action}",
-        ["cargo", cargo_action, "--manifest-path", str(refactor_dir / "Cargo.toml"), *rust_run_args],
+        ["cargo", cargo_action, *(["--quiet"] if kind == "binary" else []),
+         "--manifest-path", str(refactor_dir / "Cargo.toml"), *rust_run_args],
         cwd=refactor_dir,
         env={**plain_tool_env(), "RUSTFLAGS": "-Awarnings"},
     )
+
+    # Keep a single output file for successful binary benchmarks only.
+    # For a make target that builds AND runs tests, its output may also contain
+    # explicit recipe output or compiler diagnostics; Make's echoes are hidden.
+    if kind == "binary":
+        sections = (
+            ("Original C execution output", original_output),
+            ("Transpiled Rust execution output", transpiled_output),
+            ("Refactored Rust execution output", refactored_output),
+        )
+        with outputs_file.open("a", encoding="utf-8") as file:
+            file.write(f"=== Benchmark: {name} ===\n\n")
+            for heading, output in sections:
+                file.write(f"--- {heading} ---\n\n{output.rstrip()}\n\n")
 
     # Evaluate both finished Rust projects using the pinned rustc analyzer.
     transpiled_metrics = analyze_rust_project(transpile_dir, analyzer_exe)
@@ -408,8 +454,16 @@ def process_benchmark(config: dict, analyzer_exe: Path) -> dict:
 def main() -> int:
     selected = select_benchmarks()
     try:
-        # Never leave stale results from an earlier successful run.
+        # Clear all benchmark workspaces once at startup, before processing any
+        # benchmark. Each benchmark then keeps its own _temp/<name>/ directory.
+        if temp_dir.is_symlink():
+            raise RuntimeError(f"Refusing to delete symbolic link: {temp_dir}")
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+
+        # Never leave stale results or binary outputs from a previous run.
         results_file.unlink(missing_ok=True)
+        outputs_file.unlink(missing_ok=True)
         set_stack_limit()
         print("=== Building pinned-nightly Rust analyzer ===", flush=True)
         analyzer_exe = build_rust_analyzer(runner_dir / "rust_metrics")
@@ -418,11 +472,20 @@ def main() -> int:
 
         benchmark_results = {}
         for benchmark in selected:
-            benchmark_results[benchmark["name"]] = process_benchmark(benchmark, analyzer_exe)
+            name = benchmark["name"]
+            metrics = process_benchmark(benchmark, analyzer_exe)
+            benchmark_results[name] = metrics
+
+            # Save each completed benchmark immediately. Earlier results remain
+            # available even if a later benchmark fails.
+            benchmark_summary = format_summary({name: metrics})
+            with results_file.open("a", encoding="utf-8") as file:
+                if len(benchmark_results) > 1:
+                    file.write("\n")
+                file.write(benchmark_summary + "\n")
 
         summary = format_summary(benchmark_results)
         print("\n" + summary)
-        results_file.write_text(summary + "\n", encoding="utf-8")
         print(f"\nResults saved in: {results_file}")
     except StepError as exc:
         print(f"\n[ERROR] {exc.stage} failed", file=sys.stderr)

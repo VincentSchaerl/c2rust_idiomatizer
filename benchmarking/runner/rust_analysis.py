@@ -198,7 +198,8 @@ def format_summary(results: dict[str, dict]) -> str:
     for name, versions in results.items():
         if lines:
             lines.append("")
-        lines.append(f"=== Rust metrics: {name} ===")
+        lines.append(f"=== Benchmark: {name} ===")
+        lines.append("")
         lines.append(f"{'Metric':35} {'Transpiled':>14} {'Refactored':>14}")
         lines.append("-" * 66)
         for metric, label in labels:
