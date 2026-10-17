@@ -2,8 +2,8 @@
 """Build, execute, transpile, and analyze the standard and TRACTOR benchmarks.
 
 Standard Makefile benchmarks run their C and Rust executables; the five selected
-TRACTOR batteries are currently built and statically analyzed. TRACTOR runtime
-test vectors are not executed yet.
+TRACTOR batteries are built, statically analyzed, and functionally tested
+using the official TRACTOR test runner (Nix/Docker).
 """
 
 import argparse
@@ -24,6 +24,7 @@ from rust_analysis import (
     plain_tool_env,
 )
 from tractor_integration import BUNDLE_ORDER, discover_tractor_cases
+from tractor_tests import run_tractor_vectors, summarize_tests
 
 
 runner_dir = Path(__file__).resolve().parent
@@ -38,6 +39,8 @@ reports_dir = runner_dir / "_results"
 results_file = reports_dir / "results.txt"
 outputs_file = reports_dir / "outputs.txt"
 tractor_results_file = reports_dir / "results_tractor.txt"
+tractor_tests_file = reports_dir / "tests_tractor.txt"
+tractor_test_logs_dir = reports_dir / "tractor_test_logs"
 
 # Original Makefile benchmarks, in their execution and report order.
 BENCHMARKS = [
@@ -92,6 +95,16 @@ REFACTOR_COMMANDS = (
     "remove_redundant_integer_casts",
     "idiomatize_loops",
 )
+
+
+# TRACTOR's macrodepth variants use CMake cache variables to select their
+# macro-generated operation and repetition count. CMake defaults (add, 5)
+# do not match the expected test vectors for these two named configurations.
+# Apply overrides only to our temporary CMake build; do not edit the corpus.
+TRACTOR_CMAKE_OVERRIDES = {
+    "B02_synthetic/macrodepth_mul_4": ("-DOP=mul", "-DREPEAT=4"),
+    "B02_synthetic/macrodepth_sub_6": ("-DOP=sub", "-DREPEAT=6"),
+}
 METRIC_LABELS = (
     ("characters", "Characters of code"),
     ("c_type_occurrences", "C FFI type occurrences"),
@@ -147,35 +160,28 @@ def format_rust(directory: Path, stage: str) -> bool:
 
 
 def ensure_release_tools() -> None:
-    """Build missing C2Rust executables individually; always build the plugin."""
-    manifest = str(c2rust_root / "Cargo.toml")
-    tools = (
-        ("c2rust-transpile", "c2rust"),
-        ("c2rust-refactor", "c2rust-refactor"),
+    """Verify prebuilt release tools; do not compile or repair missing artifacts."""
+    required = (
+        ("C2Rust transpiler", c2rust_dir / "c2rust-transpile", True),
+        ("C2Rust refactorer", c2rust_dir / "c2rust-refactor", True),
+        ("Idiomatizer plugin", plugin_dir / "libc2rust_idiomatizer.so", False),
     )
-    for binary, package in tools:
-        executable = c2rust_dir / binary
-        if not executable.is_file() or not os.access(executable, os.X_OK):
-            print(f"=== Building missing release {binary} ===", flush=True)
-            run_step(
-                f"Build release {binary}",
-                ["cargo", "build", "--release", "--manifest-path", manifest,
-                 "-p", package],
-                cwd=project_root,
-            )
-        if not executable.is_file() or not os.access(executable, os.X_OK):
-            raise RuntimeError(f"Release executable not found: {executable}")
-
-    print("=== Building release Idiomatizer plugin ===", flush=True)
-    run_step(
-        "Idiomatizer plugin built",
-        ["cargo", "build", "--release", "--manifest-path",
-         str(project_root / "Cargo.toml")],
-        cwd=project_root,
-    )
-    plugin = plugin_dir / "libc2rust_idiomatizer.so"
-    if not plugin.is_file():
-        raise RuntimeError(f"Release plugin not found: {plugin}")
+    print("=== Checking prebuilt release tools ===", flush=True)
+    problems = []
+    for label, path, executable in required:
+        if not path.is_file():
+            problems.append(f"{label}: missing file: {path}")
+        elif not os.access(path, os.X_OK if executable else os.R_OK):
+            permission = "executable" if executable else "readable"
+            problems.append(f"{label}: file is not {permission}: {path}")
+        else:
+            print(f"  [OK] {label}: {path}", flush=True)
+    if problems:
+        raise RuntimeError(
+            "Required prebuilt release artifacts are unavailable; no build was started.\n"
+            + "\n".join(f"  - {problem}" for problem in problems)
+            + "\nBuild the missing artifacts manually and rerun the benchmark."
+        )
 
 
 def set_stack_limit() -> None:
@@ -536,11 +542,16 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
 
     progress["stage"] = "CMake configuration"
     request_codemodel(build_dir)
+    cmake_overrides = TRACTOR_CMAKE_OVERRIDES.get(case.case_id, ())
     run_step(
         "CMake configuration",
         ["cmake", "-S", str(input_dir), "-B", str(build_dir), "-G", "Ninja",
-         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCMAKE_C_COMPILER=clang"],
+         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCMAKE_C_COMPILER=clang",
+         *cmake_overrides],
     )
+    if cmake_overrides:
+        print(f"  [OK] TRACTOR case CMake parameters: {' '.join(cmake_overrides)}",
+              flush=True)
 
     # Keep this selection logic even for the smaller batteries: it excludes
     # unrelated translation units and finds the *actual* main C source.
@@ -551,6 +562,29 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
     progress["stage"] = "C build (selected CMake target)"
     run_step(progress["stage"], ["cmake", "--build", str(build_dir),
                                   "--target", cmake_target])
+
+    test_logs_dir = tractor_test_logs_dir / name
+    progress["vector_tests"] = {}
+
+    def test_variant(key: str, label: str, rust_project: Path | None) -> None:
+        progress["stage"] = f"{label}: TRACTOR test vectors"
+        result = run_tractor_vectors(
+            case, key, rust_project, test_logs_dir,
+            binary_name=cmake_target if case.kind == "binary" else None,
+            main_module=main_module if case.kind == "binary" else None)
+        progress["vector_tests"][key] = result
+        if result.status == "not run":
+            print(f"  [WARN] {progress['stage']}: not run ({result.reason})", flush=True)
+        elif result.status == "failed":
+            print(f"  [FAILED] {progress['stage']}: "
+                  f"{result.passed} passed, {result.failed} failed, {result.skipped} skipped"
+                  + (f" ({result.reason})" if result.reason else ""), flush=True)
+        else:
+            print(f"  [OK] {progress['stage']}: "
+                  f"{result.passed} passed, {result.failed} failed, {result.skipped} skipped",
+                  flush=True)
+
+    test_variant("c", "Original C", None)
 
     progress["stage"] = "C for-loop analysis"
     c_for_loops = count_c_for_loops(database, input_dir)
@@ -578,6 +612,8 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
     run_step(progress["stage"], ["cargo", "build", "--release", "--manifest-path",
                                   str(transpile_dir / "Cargo.toml")],
              cwd=transpile_dir, env=rust_env)
+
+    test_variant("transpiled", "Transpiled Rust", transpile_dir)
 
     progress["stage"] = "Transpiled Rust analysis"
     baseline = analyze_rust_project(transpile_dir, analyzer_exe)
@@ -615,6 +651,7 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
             run_step(progress["stage"], ["cargo", "build", "--release", "--manifest-path",
                                           str(directory / "Cargo.toml")],
                      cwd=directory, env=rust_env)
+            test_variant(key, prefix, directory)
             progress["stage"] = f"{prefix}: analysis"
             metrics = analyze_rust_project(directory, analyzer_exe)
             metrics["for_loop_ratio"] = (metrics["for_loops"], c_for_loops)
@@ -625,7 +662,9 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
             progress.setdefault("errors", []).append((stage, error))
             print(f"  [FAILED] {stage}", flush=True)
 
-    if not progress.get("errors"):
+    if not progress.get("errors") and all(
+        result.status == "complete" for result in progress.get("vector_tests", {}).values()
+    ):
         print(f"=== Completed: {display_name} ===", flush=True)
 
 
@@ -649,6 +688,11 @@ def main() -> int:
             outputs_file.unlink(missing_ok=True)
         if cases:
             tractor_results_file.unlink(missing_ok=True)
+            tractor_tests_file.unlink(missing_ok=True)
+            if tractor_test_logs_dir.is_symlink():
+                raise RuntimeError(f"Refusing symbolic link: {tractor_test_logs_dir}")
+            if tractor_test_logs_dir.exists():
+                shutil.rmtree(tractor_test_logs_dir)
 
         standard_reports = []
         collected = []
@@ -684,7 +728,9 @@ def main() -> int:
                 stage = exc.stage if isinstance(exc, StepError) else progress.get("stage", "Setup")
                 print(f"  [FAILED] tractor/{case.case_id}: {stage}", flush=True)
 
-            failed = error is not None or bool(progress.get("errors"))
+            test_results = progress.get("vector_tests", {})
+            tests_failed = any(result.status != "complete" for result in test_results.values())
+            failed = error is not None or bool(progress.get("errors")) or tests_failed
             failures += bool(failed)
             collected.append({
                 "name": f"tractor/{case.case_id}",
@@ -693,12 +739,14 @@ def main() -> int:
                 "error": error,
             })
             save_results(collected)
+            tractor_tests_file.write_text(summarize_tests(collected), encoding="utf-8")
 
         if standards:
             print(f"\nStandard results saved in: {results_file}")
             print(f"Standard benchmarks processed: {len(standards)}")
         if cases:
             print(f"\nTRACTOR results saved in: {tractor_results_file}")
+            print(f"TRACTOR test vectors saved in: {tractor_tests_file}")
             print(f"TRACTOR cases processed: {len(collected)}")
         print(f"Failed benchmarks: {failures}")
         return 1 if failures else 0

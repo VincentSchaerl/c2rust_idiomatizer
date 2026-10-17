@@ -8,19 +8,6 @@ project_root="$(cd "$test_dir/.." && pwd)"
 c2rust_dir="$project_root/lib/c2rust/target/release"
 plugin_dir="$project_root/target/release"
 
-if [[ ! -x "$c2rust_dir/c2rust-transpile" ]]; then
-  cargo build \
-    --release \
-    --manifest-path "$project_root/lib/c2rust/Cargo.toml" \
-    -p c2rust
-fi
-if [[ ! -x "$c2rust_dir/c2rust-refactor" ]]; then
-    cargo build --release \
-    --manifest-path "$project_root/lib/c2rust/Cargo.toml" \
-    -p c2rust-refactor
-fi
-cargo build --release --manifest-path "$project_root/Cargo.toml"
-
 rm -f "$test_dir/in/compile_commands.json"
 rm -rf "$test_dir/out/"*
 mkdir -p "$test_dir/out/transpile"
