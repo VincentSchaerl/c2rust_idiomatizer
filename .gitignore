@@ -2,7 +2,9 @@ __pycache__/
 /benchmarking/runner/_results/
 /benchmarking/runner/_temp/
 /benchmarking/runner/rust_metrics/target/
+
 /target/
-/test/in/out/
+
 /test/in/compile_commands.json
+/test/in/out/
 /test/out/

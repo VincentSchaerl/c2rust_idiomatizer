@@ -38,8 +38,8 @@ temp_dir = runner_dir / "_temp"
 reports_dir = runner_dir / "_results"
 results_file = reports_dir / "results.txt"
 outputs_file = reports_dir / "outputs.txt"
-tractor_results_file = reports_dir / "results_tractor.txt"
-tractor_tests_file = reports_dir / "tests_tractor.txt"
+tractor_metrics_file = reports_dir / "tractor_metrics.txt"
+tractor_tests_file = reports_dir / "tractor_tests.txt"
 tractor_test_logs_dir = reports_dir / "tractor_test_logs"
 
 # Original Makefile benchmarks, in their execution and report order.
@@ -193,91 +193,197 @@ def set_stack_limit() -> None:
     resource.setrlimit(resource.RLIMIT_STACK, (stack_bytes, hard_limit))
 
 
-def select_cases() -> tuple[list[dict], list]:
-    """Select standard benchmarks first, then supported TRACTOR cases.
+def select_cases(argv: list[str] | None = None) -> tuple[list[dict], list, bool, bool]:
+    """Select benchmarks using hierarchical TRACTOR overrides.
 
-    With no flags, run all five standard benchmarks followed by all allowed
-    TRACTOR cases. Excluding standard benchmarks with --NAME=false also keeps
-    the default TRACTOR run; positive --NAME selections choose only standards.
-    Explicit TRACTOR selections run the requested TRACTOR cases.
+    --tractor > --tractor/BATTERY > --tractor/BATTERY/CASE.
+    The closest explicitly specified value controls each TRACTOR case, even if
+    its parent was set to false. The *least specific supplied* TRACTOR level
+    sets the base selection: true selects only TRACTOR by default; false keeps
+    the standard benchmarks and excludes that TRACTOR scope by default.
+
+    Explicit positive standard selectors are always combinable with TRACTOR
+    selectors and restrict the standard side to the named benchmarks.
+    Repeating the same option with opposite values is still an error.
     """
     parser = argparse.ArgumentParser(
-        description="Run the five standard benchmarks and the five supported TRACTOR batteries.",
+        description="Run standard and TRACTOR benchmarks (all enabled by default).",
         allow_abbrev=False,
+        epilog=("Boolean options accept --OPTION, --OPTION=true, or "
+                "--OPTION=false. TRACTOR selectors use --tractor/BATTERY/CASE "
+                "and more specific selectors override their parents."),
     )
+
+    def add_bool(flag: str, dest: str, help_text: str) -> None:
+        parser.add_argument(flag, dest=dest, nargs="?", const="true",
+                            choices=("true", "false"), default=None,
+                            metavar="{true,false}", help=help_text)
+
     for config in BENCHMARKS:
         name = config["name"]
-        parser.add_argument(
-            f"--{name}", nargs="?", const="true", choices=("true", "false"),
-            default=None, metavar="{true,false}",
-            help=f"Select {name}, or exclude it with --{name}=false",
-        )
-    parser.add_argument("--tractor-case", action="append", default=[],
-                        metavar="BUNDLE/CASE", help="Select one allowed test case; repeatable")
-    parser.add_argument("--tractor-bundle", action="append", default=[],
-                        metavar="BUNDLE", help="Select one allowed battery; repeatable")
-    parser.add_argument("--tractor-all", action="store_true",
-                        help="Select all five allowed TRACTOR batteries")
-    parser.add_argument("--tractor-limit", type=int, metavar="N",
-                        help="Take the first N cases per selected --tractor-bundle")
-    args = parser.parse_args()
+        add_bool(f"--{name}", f"standard_{name}",
+                 f"Include {name}, or exclude it with --{name}=false")
+    add_bool("--tractor", "tractor", "Select or exclude the TRACTOR corpus")
+    add_bool("--tractor-metrics", "tractor_metrics", "Enable only TRACTOR metrics, or disable them")
+    add_bool("--tractor-tests", "tractor_tests", "Enable only TRACTOR tests, or disable them")
+    for bundle in BUNDLE_ORDER:
+        add_bool(f"--tractor/{bundle}", f"bundle_{bundle}",
+                 f"Select or exclude battery {bundle}; individual cases may override")
 
-    if args.tractor_all and (args.tractor_case or args.tractor_bundle or
-                             args.tractor_limit is not None):
-        parser.error("--tractor-all cannot be combined with case, bundle, or limit")
-    if args.tractor_limit is not None:
-        if args.tractor_limit < 1:
-            parser.error("--tractor-limit must be at least 1")
-        if not args.tractor_bundle:
-            parser.error("--tractor-limit requires --tractor-bundle")
+    # Case switches are discovered from the same allowlisted corpus as the run.
+    # --help and pure standard selections remain usable without a corpus checkout.
+    given = list(sys.argv[1:] if argv is None else argv)
+    if "--help" in given or "-h" in given:
+        parser.parse_args(given)
+    preliminary, unknown = parser.parse_known_args(given)
+    standard_positive = any(
+        getattr(preliminary, f"standard_{b['name']}") == "true"
+        for b in BENCHMARKS)
+    positive_battery = any(
+        getattr(preliminary, f"bundle_{bundle}") == "true"
+        for bundle in BUNDLE_ORDER)
 
-    for bundle in args.tractor_bundle:
-        if bundle not in BUNDLE_ORDER:
-            parser.error(f"Unsupported TRACTOR battery: {bundle}. "
-                         f"Allowed: {', '.join(BUNDLE_ORDER)}")
-    for case_id in args.tractor_case:
-        if case_id.split("/", 1)[0] not in BUNDLE_ORDER:
-            parser.error(f"Unsupported TRACTOR case: {case_id}. "
-                         f"Allowed batteries: {', '.join(BUNDLE_ORDER)}")
+    # Only valid canonical battery prefixes may be followed by case names.
+    # Catch misspellings such as --tractor/B01/organic/... immediately.
+    position = 0
+    while position < len(unknown):
+        token = unknown[position]
+        flag = token.partition("=")[0]
+        if flag.startswith("--tractor/"):
+            parts = flag[len("--tractor/"):].split("/")
+            if len(parts) != 2 or parts[0] not in BUNDLE_ORDER or not parts[1]:
+                parser.error(f"Unknown TRACTOR selector {flag!r}; expected "
+                             "--tractor/BATTERY/CASE with a canonical battery name")
+            if "=" not in token and position + 1 < len(unknown) and \
+                    unknown[position + 1] in ("true", "false"):
+                position += 1  # A separated value for a dynamically added case.
+        else:
+            parser.error(f"unrecognized argument: {token}")
+        position += 1
 
-    explicit_standard = any(getattr(args, b["name"]) is not None for b in BENCHMARKS)
-    affirmative = [b for b in BENCHMARKS if getattr(args, b["name"]) == "true"]
-    explicit_tractor = bool(args.tractor_all or args.tractor_case or args.tractor_bundle)
-    # Pure --NAME=false flags exclude standard benchmarks, but should not
-    # suppress the default TRACTOR run. Positive selections remain standard-only.
-    default_tractor = not affirmative and not explicit_tractor
-    if not explicit_standard and not explicit_tractor:
-        selected_standard = list(BENCHMARKS)
-    elif explicit_standard:
-        selected_standard = affirmative if affirmative else [
-            b for b in BENCHMARKS if getattr(args, b["name"]) != "false"]
+    any_battery_selector = any(
+        getattr(preliminary, f"bundle_{bundle}") is not None
+        for bundle in BUNDLE_ORDER)
+    if not unknown and ((preliminary.tractor == "false" and not positive_battery) or
+                        (standard_positive and preliminary.tractor is None
+                         and not any_battery_selector)):
+        discovered = []
     else:
+        try:
+            discovered = discover_tractor_cases()
+        except (OSError, FileNotFoundError) as exc:
+            parser.error(str(exc))
+
+    for index, case in enumerate(discovered):
+        parser.add_argument(f"--tractor/{case.case_id}", dest=f"case_{index}",
+                            nargs="?", const="true", choices=("true", "false"),
+                            default=None, metavar="{true,false}", help=argparse.SUPPRESS)
+
+    # argparse ordinarily keeps the last value of a repeated switch. Only a
+    # contradiction at the *same* specificity for the *same* option is an error.
+    encountered: dict[str, str] = {}
+    for position, token in enumerate(given):
+        flag, separator, inline = token.partition("=")
+        if not flag.startswith("--"):
+            continue
+        action = parser._option_string_actions.get(flag)
+        if action is None or not isinstance(action, argparse._StoreAction):
+            continue
+        if separator:
+            value = inline
+        elif position + 1 < len(given) and given[position + 1] in ("true", "false"):
+            value = given[position + 1]
+        else:
+            value = "true"
+        if value not in ("true", "false"):
+            continue  # Leave invalid-value messages to argparse.
+        previous = encountered.get(action.dest)
+        if previous is not None and previous != value:
+            parser.error(f"Contradiction: {flag} specified with both true and false")
+        encountered[action.dest] = value
+    args = parser.parse_args(given)
+
+    def yes(value: str | None) -> bool:
+        return value == "true"
+
+    standard_flags = {b["name"]: getattr(args, f"standard_{b['name']}")
+                      for b in BENCHMARKS}
+    std_positive = {name for name, value in standard_flags.items() if yes(value)}
+    std_negative = {name for name, value in standard_flags.items() if value == "false"}
+    battery_flags = {bundle: getattr(args, f"bundle_{bundle}") for bundle in BUNDLE_ORDER}
+    battery_positive = {bundle for bundle, value in battery_flags.items() if yes(value)}
+    case_flags = {case.case_id: getattr(args, f"case_{index}")
+                  for index, case in enumerate(discovered)}
+    case_positive = {name for name, value in case_flags.items() if yes(value)}
+
+    # The shallowest explicitly mentioned TRACTOR level controls the standard
+    # benchmark defaults. A positive standard selector narrows that side even
+    # when --tractor=false (it can still be combined with selected descendants).
+    if args.tractor is not None:
+        tractor_base_is_positive = yes(args.tractor)
+    elif any(value is not None for value in battery_flags.values()):
+        tractor_base_is_positive = bool(battery_positive)
+    elif any(value is not None for value in case_flags.values()):
+        tractor_base_is_positive = bool(case_positive)
+    else:
+        tractor_base_is_positive = False
+
+    if std_positive:
+        selected_standard = [b for b in BENCHMARKS if b["name"] in std_positive]
+    elif tractor_base_is_positive:
         selected_standard = []
+    else:
+        selected_standard = [b for b in BENCHMARKS if b["name"] not in std_negative]
+
+    # For an unspecified level, select everything unless an explicit true
+    # selector at this level (or a higher level) establishes a restricted set.
+    # Explicit battery and individual-case flags override the inherited value.
+    if args.tractor is not None:
+        default_tractor = yes(args.tractor)
+    elif any(value is not None for value in battery_flags.values()):
+        default_tractor = not bool(battery_positive)
+    elif any(value is not None for value in case_flags.values()):
+        default_tractor = not bool(case_positive)
+    else:
+        default_tractor = not bool(std_positive)
 
     cases = []
-    if explicit_tractor or default_tractor:
-        discovered = discover_tractor_cases()  # Excludes all unsupported batteries.
-        by_id = {case.case_id: case for case in discovered}
-        ids: set[str] = set()
-        if args.tractor_all or default_tractor:
-            ids.update(by_id)
-        ids.update(args.tractor_case)
-        for bundle in args.tractor_bundle:
-            matching = [case.case_id for case in discovered if case.bundle == bundle]
-            if not matching:
-                parser.error(f"No TRACTOR cases found in battery: {bundle}")
-            ids.update(matching[:args.tractor_limit])
-        for case_id in ids:
-            if case_id not in by_id:
-                parser.error(f"Unknown TRACTOR case: {case_id}")
-        cases = [case for case in discovered if case.case_id in ids]
+    for case in discovered:
+        enabled = default_tractor
+        battery_value = battery_flags[case.bundle]
+        if battery_value is not None:
+            enabled = yes(battery_value)
+        case_value = case_flags[case.case_id]
+        if case_value is not None:
+            enabled = yes(case_value)
+        if enabled:
+            cases.append(case)
 
+    tractor_positive = (yes(args.tractor) or bool(battery_positive) or bool(case_positive))
+    if tractor_positive and not cases:
+        parser.error("TRACTOR cases were explicitly selected, but none remain enabled")
     if not selected_standard and not cases:
         parser.error("No benchmarks selected")
+
+    # Analysis switches configure selected TRACTOR cases; they do not select
+    # benchmarks themselves. A single positive analysis switch limits the run
+    # to that analysis unless the other was explicitly enabled too.
+    metrics = args.tractor_metrics != "false"
+    tests = args.tractor_tests != "false"
+    if args.tractor_metrics == "true" and args.tractor_tests is None:
+        tests = False
+    if args.tractor_tests == "true" and args.tractor_metrics is None:
+        metrics = False
+    if cases and not (metrics or tests):
+        parser.error("Contradiction: TRACTOR cases selected, but both "
+                     "--tractor-metrics=false and --tractor-tests=false")
+    if not cases and (yes(args.tractor_metrics) or yes(args.tractor_tests)):
+        parser.error("Contradiction: TRACTOR analysis requested, but no TRACTOR cases selected")
+
     for config in selected_standard:
         if not config["path"].is_dir():
             parser.error(f"Benchmark source directory does not exist: {config['path']}")
-    return selected_standard, cases
+    return selected_standard, cases, metrics, tests
 
 
 def standard_report(name: str, kind: str, transpiled: dict, refactored: dict,
@@ -373,7 +479,9 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
         run_step(f"Refactoring: {pass_name}",
                  [str(c2rust_dir / "c2rust-refactor"), "--cargo", "--plugin-dir",
                   str(plugin_dir), "--plugin-name", "c2rust_idiomatizer",
-                  "--rewrite-mode", "inplace", pass_name], cwd=refactor_dir)
+                  "--rewrite-mode", "inplace", pass_name,
+                  *(["transform-public-functions=true"] if pass_name == "idiomatize_loops" else [])],
+                 cwd=refactor_dir)
     if not format_rust(refactor_dir, "Refactored Rust formatting"):
         warnings.append("Refactored Rust: formatting failed; compiled unformatted Rust")
     refactored_output = run_step(
@@ -408,19 +516,12 @@ def metric_value(metrics: dict | None, key: str) -> str:
 
 
 def case_report(case: dict) -> str:
-    library = case["kind"] == "library"
-    header = (f"{'Metric':35} {'Transpiled':>14} {'Refactored (true)':>20} "
-              f"{'Refactored (false)':>21}" if library else
-              f"{'Metric':35} {'Transpiled':>14} {'Refactored (true)':>20}")
-    lines = [f"=== Benchmark: {case['name']} ({case['kind']}) ===", "", header, "-" * len(header)]
+    header = f"{'Metric':35} {'Transpiled':>14} {'Refactored':>14}"
+    lines = [f"=== Benchmark: {case['name']} ({case['kind']}) ===", "",
+             header, "-" * len(header)]
     for key, label in METRIC_LABELS:
-        first = metric_value(case.get("transpiled"), key)
-        true = metric_value(case.get("refactored"), key)
-        row = f"{label:35} {first:>14} {true:>20}"
-        if library:
-            false = metric_value(case.get("refactored_abi"), key)
-            row += f" {false:>21}"
-        lines.append(row)
+        lines.append(f"{label:35} {metric_value(case.get('transpiled'), key):>14} "
+                     f"{metric_value(case.get('refactored'), key):>14}")
 
     errors = case.get("errors", [])
     if case.get("error") is not None:
@@ -449,59 +550,31 @@ def sum_metrics(cases: list[dict], variant: str) -> dict | None:
     return sums
 
 
-def total_table(heading: str, cohort: list[dict], variant: str,
-                eligible_count: int) -> str:
-    label = "true" if variant == "refactored" else "false"
-    header = f"{'Metric':35} {'Transpiled':>14} {('Refactored (' + label + ')'):>20}"
-    a, b = sum_metrics(cohort, "transpiled"), sum_metrics(cohort, variant)
+def totals_report(cases: list[dict]) -> str:
+    """Single paired total: include a case only if both Rust metrics exist."""
+    matched = [case for case in cases
+               if case.get("transpiled") is not None and case.get("refactored") is not None]
+    transpiled = sum_metrics(matched, "transpiled")
+    refactored = sum_metrics(matched, "refactored")
+    heading = "TRACTOR benchmarks — total"
+    header = f"{'Metric':35} {'Transpiled':>14} {'Refactored':>14}"
     lines = [f"=== {heading} ===", "", header, "-" * len(header)]
-    for key, name in METRIC_LABELS:
-        lines.append(f"{name:35} {metric_value(a, key):>14} {metric_value(b, key):>20}")
-    excluded = eligible_count - len(cohort)
-    if excluded > 0:
-        qualifier = heading.removeprefix("TRACTOR benchmarks — total ")
-        lines.extend([
-            "",
-            f"Note: {excluded} of {eligible_count} TRACTOR benchmarks excluded from "
-            f"the total {qualifier} because not all required variants were analyzed.",
-        ])
+    for key, label in METRIC_LABELS:
+        lines.append(f"{label:35} {metric_value(transpiled, key):>14} "
+                     f"{metric_value(refactored, key):>14}")
+    excluded = len(cases) - len(matched)
+    lines.extend(["", f"Cases included: {len(matched)} of {len(cases)}."])
+    if excluded:
+        lines.append(f"Note: {excluded} TRACTOR benchmark(s) excluded from this total "
+                     "because not all required variants were analyzed.")
     return "\n".join(lines)
 
 
-def totals_report(cases: list[dict]) -> str:
-    libraries = [case for case in cases if case["kind"] == "library"]
-    # The mixed total requires both variants for libraries (three measurements),
-    # but only baseline+true for executables (false is not applicable).
-    true_both = [
-        case for case in cases
-        if case.get("transpiled") is not None
-        and case.get("refactored") is not None
-        and (case["kind"] != "library" or case.get("refactored_abi") is not None)
-    ]
-    # Each library-only total uses its own matched baseline/variant cohort.
-    true_libraries = [
-        case for case in libraries
-        if case.get("transpiled") is not None and case.get("refactored") is not None
-    ]
-    false_libraries = [
-        case for case in libraries
-        if case.get("transpiled") is not None and case.get("refactored_abi") is not None
-    ]
-    return "\n\n".join((
-        total_table("TRACTOR benchmarks — total (true, both)", true_both,
-                    "refactored", len(cases)),
-        total_table("TRACTOR benchmarks — total (true, libraries)", true_libraries,
-                    "refactored", len(libraries)),
-        total_table("TRACTOR benchmarks — total (false, libraries)", false_libraries,
-                    "refactored_abi", len(libraries)),
-    ))
-
-
 def save_results(cases: list[dict]) -> None:
-    """Keep complete-case totals and partial per-case results after each case."""
+    """Keep paired totals and partial per-case results after every case."""
     reports = [case_report(case) for case in cases]
     reports.append(totals_report(cases))
-    tractor_results_file.write_text("\n\n".join(reports) + "\n", encoding="utf-8")
+    tractor_metrics_file.write_text("\n\n".join(reports) + "\n", encoding="utf-8")
 
 
 def short_error(error: Exception) -> str:
@@ -524,8 +597,9 @@ def short_error(error: Exception) -> str:
     return (lines[0] if lines else "unknown error")[:200]
 
 
-def process_case(case, analyzer_exe: Path, progress: dict) -> None:
-    """Process a TRACTOR case, keeping baseline and variant outcomes separate."""
+def process_case(case, analyzer_exe: Path | None, progress: dict, *,
+                 evaluate_metrics: bool = True, evaluate_tests: bool = True) -> None:
+    """Build one C/Rust pair; run independently enabled metrics and test vectors."""
     name = "tractor__" + case.case_id.replace("/", "__")
     display_name = f"tractor/{case.case_id}"
     print(f"\n=== Benchmark: {display_name} ({case.kind}) ===", flush=True)
@@ -553,8 +627,6 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
         print(f"  [OK] TRACTOR case CMake parameters: {' '.join(cmake_overrides)}",
               flush=True)
 
-    # Keep this selection logic even for the smaller batteries: it excludes
-    # unrelated translation units and finds the *actual* main C source.
     progress["stage"] = "CMake target selection"
     database, main_module, cmake_target, native_link_flags = select_cmake_compilation(
         build_dir, input_dir, case.kind,
@@ -563,32 +635,34 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
     run_step(progress["stage"], ["cmake", "--build", str(build_dir),
                                   "--target", cmake_target])
 
-    test_logs_dir = tractor_test_logs_dir / name
-    progress["vector_tests"] = {}
+    if evaluate_tests:
+        test_logs_dir = tractor_test_logs_dir / name
+        progress["vector_tests"] = {}
 
-    def test_variant(key: str, label: str, rust_project: Path | None) -> None:
-        progress["stage"] = f"{label}: TRACTOR test vectors"
-        result = run_tractor_vectors(
-            case, key, rust_project, test_logs_dir,
-            binary_name=cmake_target if case.kind == "binary" else None,
-            main_module=main_module if case.kind == "binary" else None)
-        progress["vector_tests"][key] = result
-        if result.status == "not run":
-            print(f"  [WARN] {progress['stage']}: not run ({result.reason})", flush=True)
-        elif result.status == "failed":
-            print(f"  [FAILED] {progress['stage']}: "
-                  f"{result.passed} passed, {result.failed} failed, {result.skipped} skipped"
-                  + (f" ({result.reason})" if result.reason else ""), flush=True)
-        else:
-            print(f"  [OK] {progress['stage']}: "
-                  f"{result.passed} passed, {result.failed} failed, {result.skipped} skipped",
-                  flush=True)
+        def test_variant(key: str, label: str, rust_project: Path | None) -> None:
+            progress["stage"] = f"{label}: TRACTOR test vectors"
+            result = run_tractor_vectors(
+                case, key, rust_project, test_logs_dir,
+                binary_name=cmake_target if case.kind == "binary" else None,
+                main_module=main_module if case.kind == "binary" else None)
+            progress["vector_tests"][key] = result
+            if result.status == "not run":
+                print(f"  [WARN] {progress['stage']}: not run ({result.reason})", flush=True)
+            elif result.status == "failed":
+                print(f"  [FAILED] {progress['stage']}: "
+                      f"{result.passed} passed, {result.failed} failed, {result.skipped} skipped"
+                      + (f" ({result.reason})" if result.reason else ""), flush=True)
+            else:
+                print(f"  [OK] {progress['stage']}: "
+                      f"{result.passed} passed, {result.failed} failed, {result.skipped} skipped",
+                      flush=True)
 
-    test_variant("c", "Original C", None)
+        test_variant("c", "Original C", None)
 
-    progress["stage"] = "C for-loop analysis"
-    c_for_loops = count_c_for_loops(database, input_dir)
-    print("  [OK] C for-loop analysis", flush=True)
+    if evaluate_metrics:
+        progress["stage"] = "C for-loop analysis"
+        c_for_loops = count_c_for_loops(database, input_dir)
+        print("  [OK] C for-loop analysis", flush=True)
 
     progress["stage"] = "C2Rust transpilation"
     command = [str(c2rust_dir / "c2rust-transpile")]
@@ -613,54 +687,53 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
                                   str(transpile_dir / "Cargo.toml")],
              cwd=transpile_dir, env=rust_env)
 
-    test_variant("transpiled", "Transpiled Rust", transpile_dir)
+    if evaluate_tests:
+        test_variant("transpiled", "Transpiled Rust", transpile_dir)
+    if evaluate_metrics:
+        progress["stage"] = "Transpiled Rust analysis"
+        baseline = analyze_rust_project(transpile_dir, analyzer_exe)
+        baseline["for_loop_ratio"] = (baseline["for_loops"], c_for_loops)
+        progress["transpiled"] = baseline
+        print("  [OK] Transpiled Rust analysis", flush=True)
 
-    progress["stage"] = "Transpiled Rust analysis"
-    baseline = analyze_rust_project(transpile_dir, analyzer_exe)
-    baseline["for_loop_ratio"] = (baseline["for_loops"], c_for_loops)
-    progress["transpiled"] = baseline
-    print("  [OK] Transpiled Rust analysis", flush=True)
+    # Only the transform-public-functions=true configuration is benchmarked.
+    prefix = "Refactored Rust"
+    directory = work_dir / "out" / "refactor"
+    try:
+        progress["stage"] = f"{prefix}: copy"
+        shutil.copytree(transpile_dir, directory, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("target"))
+        print(f"  [OK] {progress['stage']}", flush=True)
+        for refactor_command in REFACTOR_COMMANDS:
+            progress["stage"] = f"{prefix}: {refactor_command}"
+            command = [str(c2rust_dir / "c2rust-refactor"), "--cargo",
+                       "--plugin-dir", str(plugin_dir),
+                       "--plugin-name", "c2rust_idiomatizer",
+                       "--rewrite-mode", "inplace", refactor_command]
+            if refactor_command == "idiomatize_loops":
+                command.append("transform-public-functions=true")
+            run_step(progress["stage"], command, cwd=directory)
 
-    variants = [(True, "refactored", "refactor_public_true")]
-    if case.kind == "library":
-        variants.append((False, "refactored_abi", "refactor_public_false"))
-
-    for transform_public, key, folder in variants:
-        prefix = f"Refactored Rust (transform-public-functions={str(transform_public).lower()})"
-        directory = work_dir / "out" / folder
-        try:
-            progress["stage"] = f"{prefix}: copy"
-            shutil.copytree(transpile_dir, directory, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns("target"))
-            print(f"  [OK] {progress['stage']}", flush=True)
-            for refactor_command in REFACTOR_COMMANDS:
-                progress["stage"] = f"{prefix}: {refactor_command}"
-                command = [str(c2rust_dir / "c2rust-refactor"), "--cargo",
-                           "--plugin-dir", str(plugin_dir),
-                           "--plugin-name", "c2rust_idiomatizer",
-                           "--rewrite-mode", "inplace", refactor_command]
-                if refactor_command == "idiomatize_loops" and not transform_public:
-                    command.append("transform-public-functions=false")
-                run_step(progress["stage"], command, cwd=directory)
-
-            progress["stage"] = f"{prefix}: formatting"
-            if not format_rust(directory, progress["stage"]):
-                progress.setdefault("warnings", []).append(
-                    f"{prefix}: formatting failed; compiled unformatted Rust")
-            progress["stage"] = f"{prefix}: release build"
-            run_step(progress["stage"], ["cargo", "build", "--release", "--manifest-path",
-                                          str(directory / "Cargo.toml")],
-                     cwd=directory, env=rust_env)
-            test_variant(key, prefix, directory)
+        progress["stage"] = f"{prefix}: formatting"
+        if not format_rust(directory, progress["stage"]):
+            progress.setdefault("warnings", []).append(
+                f"{prefix}: formatting failed; compiled unformatted Rust")
+        progress["stage"] = f"{prefix}: release build"
+        run_step(progress["stage"], ["cargo", "build", "--release", "--manifest-path",
+                                      str(directory / "Cargo.toml")],
+                 cwd=directory, env=rust_env)
+        if evaluate_tests:
+            test_variant("refactored", prefix, directory)
+        if evaluate_metrics:
             progress["stage"] = f"{prefix}: analysis"
             metrics = analyze_rust_project(directory, analyzer_exe)
             metrics["for_loop_ratio"] = (metrics["for_loops"], c_for_loops)
-            progress[key] = metrics
+            progress["refactored"] = metrics
             print(f"  [OK] {progress['stage']}", flush=True)
-        except (StepError, OSError, RuntimeError, RustAnalysisError, CAnalysisError) as error:
-            stage = error.stage if isinstance(error, StepError) else progress["stage"]
-            progress.setdefault("errors", []).append((stage, error))
-            print(f"  [FAILED] {stage}", flush=True)
+    except (StepError, OSError, RuntimeError, RustAnalysisError, CAnalysisError) as error:
+        stage = error.stage if isinstance(error, StepError) else progress["stage"]
+        progress.setdefault("errors", []).append((stage, error))
+        print(f"  [FAILED] {stage}", flush=True)
 
     if not progress.get("errors") and all(
         result.status == "complete" for result in progress.get("vector_tests", {}).values()
@@ -669,13 +742,15 @@ def process_case(case, analyzer_exe: Path, progress: dict) -> None:
 
 
 def main() -> int:
-    standards, cases = select_cases()
+    standards, cases, tractor_metrics, tractor_tests = select_cases()
     try:
         set_stack_limit()
         ensure_release_tools()
-        print("=== Building release Rust analyzer ===", flush=True)
-        analyzer = build_rust_analyzer(runner_dir / "rust_metrics")
-        print("  [OK] Rust analyzer built", flush=True)
+        analyzer = None
+        if standards or (cases and tractor_metrics):
+            print("=== Building release Rust analyzer ===", flush=True)
+            analyzer = build_rust_analyzer(runner_dir / "rust_metrics")
+            print("  [OK] Rust analyzer built", flush=True)
 
         if temp_dir.is_symlink():
             raise RuntimeError(f"Refusing to delete symbolic link: {temp_dir}")
@@ -687,12 +762,16 @@ def main() -> int:
             results_file.unlink(missing_ok=True)
             outputs_file.unlink(missing_ok=True)
         if cases:
-            tractor_results_file.unlink(missing_ok=True)
+            # Remove stale reports from an earlier run, even if this run disables
+            # one of the two analyses. Never delete an old report before cases
+            # have actually been selected.
+            tractor_metrics_file.unlink(missing_ok=True)
             tractor_tests_file.unlink(missing_ok=True)
-            if tractor_test_logs_dir.is_symlink():
-                raise RuntimeError(f"Refusing symbolic link: {tractor_test_logs_dir}")
-            if tractor_test_logs_dir.exists():
-                shutil.rmtree(tractor_test_logs_dir)
+            if tractor_tests:
+                if tractor_test_logs_dir.is_symlink():
+                    raise RuntimeError(f"Refusing symbolic link: {tractor_test_logs_dir}")
+                if tractor_test_logs_dir.exists():
+                    shutil.rmtree(tractor_test_logs_dir)
 
         standard_reports = []
         collected = []
@@ -721,7 +800,8 @@ def main() -> int:
             progress = {}
             error = None
             try:
-                process_case(case, analyzer, progress)
+                process_case(case, analyzer, progress,
+                             evaluate_metrics=tractor_metrics, evaluate_tests=tractor_tests)
             except Exception as exc:
                 # A single failing TRACTOR case must not terminate the batch.
                 error = exc
@@ -729,7 +809,9 @@ def main() -> int:
                 print(f"  [FAILED] tractor/{case.case_id}: {stage}", flush=True)
 
             test_results = progress.get("vector_tests", {})
-            tests_failed = any(result.status != "complete" for result in test_results.values())
+            tests_failed = tractor_tests and (
+                len(test_results) != 3 or
+                any(result.status != "complete" for result in test_results.values()))
             failed = error is not None or bool(progress.get("errors")) or tests_failed
             failures += bool(failed)
             collected.append({
@@ -738,15 +820,19 @@ def main() -> int:
                 **progress,
                 "error": error,
             })
-            save_results(collected)
-            tractor_tests_file.write_text(summarize_tests(collected), encoding="utf-8")
+            if tractor_metrics:
+                save_results(collected)
+            if tractor_tests:
+                tractor_tests_file.write_text(summarize_tests(collected), encoding="utf-8")
 
         if standards:
             print(f"\nStandard results saved in: {results_file}")
             print(f"Standard benchmarks processed: {len(standards)}")
         if cases:
-            print(f"\nTRACTOR results saved in: {tractor_results_file}")
-            print(f"TRACTOR test vectors saved in: {tractor_tests_file}")
+            if tractor_metrics:
+                print(f"\nTRACTOR metrics saved in: {tractor_metrics_file}")
+            if tractor_tests:
+                print(f"TRACTOR test vectors saved in: {tractor_tests_file}")
             print(f"TRACTOR cases processed: {len(collected)}")
         print(f"Failed benchmarks: {failures}")
         return 1 if failures else 0

@@ -217,7 +217,7 @@ def run_tractor_vectors(case, variant: str, rust_project: Path | None,
                         main_module: str | None = None) -> VectorResults:
     """Evaluate one C/Rust variant, preserving the original corpus checkout.
 
-    ``variant`` is one of c, transpiled, refactored, refactored_abi.
+    ``variant`` is one of c, transpiled, refactored.
     Rust translations are temporarily copied into the corpus's documented
     translated_rust/ location (never overwrite an existing one).
     """
@@ -324,42 +324,48 @@ def run_tractor_vectors(case, variant: str, rust_project: Path | None,
 
 
 def summarize_tests(cases: list[dict]) -> str:
-    """Human-readable test-vector results; unavailable is never counted as 0."""
-    lines = []
+    """Three-column paired totals, using only cases with all three reports."""
     variants = (("c", "Original C"), ("transpiled", "Transpiled"),
-                ("refactored", "Refactored (true)"),
-                ("refactored_abi", "Refactored (false)"))
-    totals = {key: [0, 0, 0, 0] for key, _ in variants}
+                ("refactored", "Refactored"))
+    header = f"{'Test vectors':20}" + "".join(f" {label:>21}" for _, label in variants)
+    counts = {key: {field: 0 for field in ("passed", "failed", "skipped")}
+              for key, _ in variants}
+    lines = []
+    matched = 0
     for case in cases:
-        lines += [f"=== Benchmark: {case['name']} ({case['kind']}) ===", ""]
-        columns = [(key, label) for key, label in variants
-                   if key != "refactored_abi" or case["kind"] == "library"]
-        header = f"{'Test vectors':20}" + "".join(f" {label:>21}" for _, label in columns)
-        lines += [header, "-" * len(header)]
+        lines.extend([f"=== Benchmark: {case['name']} ({case['kind']}) ===", "",
+                      header, "-" * len(header)])
         tests = case.get("vector_tests", {})
         for label, field_name in (("Passed", "passed"), ("Failed", "failed"),
                                   ("Skipped", "skipped")):
             lines.append(f"{label:20}" + "".join(
                 f" {str(getattr(tests[key], field_name)) if key in tests and tests[key].status != 'not run' else '—':>21}"
-                for key, _ in columns))
-        for key, label in columns:
+                for key, _ in variants))
+        for key, label in variants:
             result = tests.get(key)
             if result is None or result.status == "not run":
                 lines.append(f"Not run ({label}): {result.reason if result else 'Build/translation did not complete'}")
             else:
-                totals[key][0] += result.passed
-                totals[key][1] += result.failed
-                totals[key][2] += result.skipped
-                totals[key][3] += 1
                 if result.reason:
                     lines.append(f"{label}: {result.reason}")
                 lines.extend(f"{label}: {message}" for message in result.details)
+        if all(key in tests and tests[key].status != "not run" for key, _ in variants):
+            matched += 1
+            for key, _ in variants:
+                for field_name in counts[key]:
+                    counts[key][field_name] += getattr(tests[key], field_name)
         lines.append("")
-    lines += ["=== TRACTOR test vectors — totals ===", "",
-              f"{'Variant':23} {'Passed':>10} {'Failed':>10} {'Skipped':>10} {'Cases':>10}",
-              "-" * 66]
-    for key, label in variants:
-        passed, failed, skipped, count = totals[key]
-        lines.append(f"{label:23} {passed:10} {failed:10} {skipped:10} {count:10}")
-    lines.append("Totals include only variants with readable test-vector reports.")
+
+    lines.extend(["=== TRACTOR test vectors — totals ===", "", header,
+                  "-" * len(header)])
+    for label, field_name in (("Passed", "passed"), ("Failed", "failed"),
+                              ("Skipped", "skipped")):
+        lines.append(f"{label:20}" + "".join(
+            f" {counts[key][field_name]:>21}" for key, _ in variants))
+    lines.append("")
+    lines.append(f"Cases included: {matched} of {len(cases)} (complete three-variant reports).")
+    excluded = len(cases) - matched
+    if excluded:
+        lines.append(f"Note: {excluded} TRACTOR benchmark(s) excluded from totals "
+                     "because a variant has no readable test-vector report.")
     return "\n".join(lines) + "\n"
