@@ -1,18 +1,30 @@
 [submodule "lib/c2rust"]
 	path = lib/c2rust
 	url = https://github.com/immunant/c2rust.git
-[submodule "benchmarking/benchmarks/urlparser"]
-	path = benchmarking/benchmarks/urlparser
-	url = https://github.com/jwerle/url.h.git
+[submodule "benchmarking/benchmarks/buffer"]
+	path = benchmarking/benchmarks/buffer
+	url = https://github.com/clibs/buffer
 [submodule "benchmarking/benchmarks/bzip2"]
 	path = benchmarking/benchmarks/bzip2
 	url = git://sourceware.org/git/bzip2.git
 [submodule "benchmarking/benchmarks/genann"]
 	path = benchmarking/benchmarks/genann
 	url = https://github.com/codeplea/genann.git
-[submodule "benchmarking/benchmarks/buffer"]
-	path = benchmarking/benchmarks/buffer
-	url = https://github.com/clibs/buffer
+[submodule "benchmarking/benchmarks/libcsv"]
+	path = benchmarking/benchmarks/libcsv
+	url = https://github.com/rgamble/libcsv.git
+[submodule "benchmarking/benchmarks/libtree"]
+	path = benchmarking/benchmarks/libtree
+	url = https://github.com/haampie/libtree.git
+[submodule "benchmarking/benchmarks/lil"]
+	path = benchmarking/benchmarks/lil
+	url = https://github.com/immunant/lil.git
 [submodule "benchmarking/benchmarks/PUBLIC-Test-Corpus"]
 	path = benchmarking/benchmarks/PUBLIC-Test-Corpus
 	url = https://github.com/DARPA-TRACTOR-Program/PUBLIC-Test-Corpus.git
+[submodule "benchmarking/benchmarks/rgba"]
+	path = benchmarking/benchmarks/rgba
+	url = https://github.com/clibs/rgba.git
+[submodule "benchmarking/benchmarks/urlparser"]
+	path = benchmarking/benchmarks/urlparser
+	url = https://github.com/jwerle/url.h.git

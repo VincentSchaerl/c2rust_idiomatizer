@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from c_analysis import CAnalysisError, count_c_for_loops
@@ -42,7 +43,10 @@ tractor_metrics_file = reports_dir / "tractor_metrics.txt"
 tractor_tests_file = reports_dir / "tractor_tests.txt"
 tractor_test_logs_dir = reports_dir / "tractor_test_logs"
 
-# Original Makefile benchmarks, in their execution and report order.
+# Standard Makefile benchmarks, in execution/report order: test first, then A-Z.
+# Some library projects (libcsv, rgba) supply standalone C test programs.
+# Translate these executables along with their library sources so the same
+# functional checks can be run in the C and Rust variants.
 BENCHMARKS = [
     {
         "name": "test",
@@ -78,6 +82,52 @@ BENCHMARKS = [
         "kind": "binary",
         "make_target": "check",
         "make_runs_binary": True,
+        "main_module": "test",
+    },
+    {
+        "name": "libcsv",
+        "path": benchmarks_dir / "libcsv",
+        "kind": "binary",  # Library exercised via its check_csv C test executable.
+        "autotools_fix_timestamps": True,
+        "prepare_commands": (
+            ("Autotools configuration", ["sh", "configure", "--disable-shared"]),
+        ),
+        # Build the CSV library before linking its test driver. Building
+        # check_csv alone fails with "cannot find -lcsv" on a clean checkout.
+        "make_target": ["libcsv.la", "check_csv"],
+        "make_runs_binary": False,
+        "executable": "check_csv",
+        "main_module": "test_csv",  # Source filename, not the Makefile target name.
+    },
+    {
+        "name": "libtree",
+        "path": benchmarks_dir / "libtree",
+        "kind": "binary",  # Despite its name, libtree is a command-line executable.
+        "make_target": "libtree",
+        "make_runs_binary": False,
+        "executable": "libtree",
+        "main_module": "libtree",
+        "run_args": ["--help"],
+    },
+    {
+        "name": "lil",
+        "path": benchmarks_dir / "lil",
+        "kind": "binary",
+        "make_target": "lil",
+        "make_runs_binary": False,
+        "executable": "lil",
+        "main_module": "main",
+        "input_args": ["hello.lil"],  # Real smoke test; --help is interpreted as a file.
+    },
+    {
+        "name": "rgba",
+        "path": benchmarks_dir / "rgba",
+        "kind": "binary",  # Library exercised via its assertion-based test.c.
+        "make_target": "test",
+        "clean_target": None,
+        "make_runs_binary": False,
+        "executable": "test",
+        "build_only_rule": "test: test.c src/rgba.c\n\t$(CC) -std=c99 $^ -o $@\n",
         "main_module": "test",
     },
     {
@@ -400,6 +450,29 @@ def standard_report(name: str, kind: str, transpiled: dict, refactored: dict,
     return "\n".join(lines)
 
 
+def fix_autotools_timestamps(directory: Path) -> None:
+    """Normalize archive mtimes only in the temporary copy of libcsv.
+
+    Some ZIP archives contain files with future modification timestamps.
+    Autotools then tries to regenerate old prebuilt scripts with aclocal-1.14,
+    which need not be installed. Make the distributed source inputs older
+    than the already supplied, generated Autotools scripts. No autoreconf.
+    """
+    baseline = time.time() - 120
+    for path in directory.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            old = path.stat()
+            if old.st_mtime > baseline:
+                os.utime(path, (old.st_atime, baseline))
+    for index, filename in enumerate(("aclocal.m4", "configure", "Makefile.in")):
+        file = directory / filename
+        if not file.is_file():
+            raise RuntimeError(f"Missing pregenerated Autotools file: {file}")
+        timestamp = baseline + 20 * (index + 1)
+        os.utime(file, (timestamp, timestamp))
+    print("  [OK] Autotools generated-script timestamps normalized", flush=True)
+
+
 def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list[str]]:
     """Original Make/Bear and execution pipeline, using release Rust artifacts."""
     name = config["name"]
@@ -412,9 +485,30 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
     transpile_dir.mkdir(parents=True)
     shutil.copytree(config["path"], input_dir, dirs_exist_ok=True)
 
+    # Project-specific preparation happens only in _temp, never in the inputs.
+    if config.get("autotools_fix_timestamps"):
+        fix_autotools_timestamps(input_dir)
+    for stage, command in config.get("prepare_commands", ()):
+        run_step(stage, command, cwd=input_dir)
+
+    # Arguments referring to bundled test inputs must use the copied input
+    # tree, because Cargo normally executes from the generated Rust project.
+    run_args = [*config.get("run_args", ()),
+                *(str(input_dir / path) for path in config.get("input_args", ()))]
+
     make_command = ["make", "-C", str(input_dir)]
-    if config.get("make_target") is not None:
-        make_command.append(config["make_target"])
+    if config.get("build_only_rule"):
+        # Add a tiny Makefile overlay under _temp. It changes no C source and
+        # preserves all original prerequisites and compiler/linker flags.
+        # Only the recipe running the test during the build is replaced.
+        override = input_dir / "benchmark_build_only.mk"
+        override.write_text(config["build_only_rule"], encoding="utf-8")
+        make_command.extend(["-f", "Makefile", "-f", override.name])
+    targets = config.get("make_target")
+    if isinstance(targets, str):
+        make_command.append(targets)
+    elif targets is not None:
+        make_command.extend(targets)
     clean_target = config.get("clean_target", "clean")
     if clean_target is not None:
         run_step("C clean", ["make", "-C", str(input_dir), clean_target])
@@ -428,7 +522,7 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
         run_step("C build", make_command)
         original_output = (
             run_step("C execution", [str(input_dir / config["executable"]),
-                                     *config.get("run_args", [])], cwd=input_dir)
+                                      *run_args], cwd=input_dir)
             if kind == "binary" else ""
         )
 
@@ -461,8 +555,7 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
 
     rust_env = {**plain_tool_env(), "RUSTFLAGS": "-Awarnings"}
     cargo_action = "run" if kind == "binary" else "build"
-    cargo_args = (["--", *config["run_args"]]
-                  if kind == "binary" and config.get("run_args") else [])
+    cargo_args = (["--", *run_args] if kind == "binary" and run_args else [])
     def cargo_command(directory: Path) -> list[str]:
         return ["cargo", cargo_action, "--release", "--manifest-path",
                 str(directory / "Cargo.toml"),
@@ -470,7 +563,9 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
 
     transpiled_output = run_step(
         "Transpiled Rust execution" if kind == "binary" else "Transpiled Rust release build",
-        cargo_command(transpile_dir), cwd=transpile_dir, env=rust_env)
+        cargo_command(transpile_dir),
+        cwd=transpile_dir,
+        env=rust_env)
 
     shutil.copytree(transpile_dir, refactor_dir, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("target"))
@@ -486,7 +581,9 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
         warnings.append("Refactored Rust: formatting failed; compiled unformatted Rust")
     refactored_output = run_step(
         "Refactored Rust execution" if kind == "binary" else "Refactored Rust release build",
-        cargo_command(refactor_dir), cwd=refactor_dir, env=rust_env)
+        cargo_command(refactor_dir),
+        cwd=refactor_dir,
+        env=rust_env)
 
     if kind == "binary":
         with outputs_file.open("a", encoding="utf-8") as file:
@@ -494,7 +591,10 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
             for title, output in (("Original C execution output", original_output),
                                   ("Transpiled Rust execution output", transpiled_output),
                                   ("Refactored Rust execution output", refactored_output)):
-                file.write(f"--- {title} ---\n\n{output.rstrip()}\n\n")
+                # An assertion-based test can succeed silently; record that
+                # explicitly rather than leaving an apparently missing result.
+                readable = output.rstrip() or "(exit status 0; no stdout)"
+                file.write(f"--- {title} ---\n\n{readable}\n\n")
 
     baseline = analyze_rust_project(transpile_dir, analyzer_exe)
     print("  [OK] Transpiled Rust analysis", flush=True)
