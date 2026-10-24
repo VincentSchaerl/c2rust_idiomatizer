@@ -4,12 +4,12 @@ use c2rust_refactor::driver::Phase;
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
 use rustc_ast::{
-    BinOpKind, Block, Crate, Expr, ExprKind, FnRetTy, ForeignItemKind, Item, ItemKind, LitKind,
+    BinOpKind, Block, BorrowKind, Crate, Expr, ExprKind, FnRetTy, ForeignItemKind, Item, ItemKind, LitKind,
     Local, LocalKind, ModKind, Pat, PatKind, StmtKind, Ty, TyKind, UnOp, VariantData,
 };
 use rustc_span::Span;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 struct BitWidths {
@@ -42,6 +42,12 @@ enum IntegerType {
 }
 
 #[derive(Clone, Debug)]
+struct TypeAliasInfo {
+    target: P<Ty>,
+    module_path: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
 struct TypePath {
     candidates: Vec<String>,
 }
@@ -62,7 +68,10 @@ enum TypeInfo {
     Integer(IntegerType),
     Struct(TypePath),
     Pointer(Box<TypeInfo>),
+    Reference(Box<TypeInfo>),
     Array(Box<TypeInfo>),
+    Slice(Box<TypeInfo>),
+    Unknown,
 }
 
 #[derive(Clone, Debug)]
@@ -73,14 +82,17 @@ struct FunctionContext {
 
 struct RemoveRedundantIntegerCasts {
     bit_widths: BitWidths,
+    type_aliases: HashMap<String, TypeAliasInfo>,
     global_vars: HashMap<String, TypeInfo>,
+    global_const_arrays: HashMap<String, TypeInfo>,
     struct_fields: HashMap<String, HashMap<String, TypeInfo>>,
     function_param_types: HashMap<String, Vec<Option<TypeInfo>>>,
-    function_return_types: HashMap<String, Option<IntegerType>>,
+    function_return_types: HashMap<String, Option<TypeInfo>>,
     function_contexts: Vec<(Span, FunctionContext)>,
     local_scopes: Vec<HashMap<String, TypeInfo>>,
     current_return_types: Vec<Option<IntegerType>>,
     current_module_path: Vec<String>,
+    changed: bool,
 }
 
 pub fn register_remove_redundant_integer_casts(reg: &mut Registry) {
@@ -171,14 +183,19 @@ fn validate_c_integer_widths(bit_widths: &BitWidths) {
 }
 
 fn remove_redundant_integer_casts(krate: &mut Crate, bit_widths: BitWidths) {
-    let struct_fields = collect_struct_fields(krate, &bit_widths);
-    let global_vars = collect_global_vars(krate, &bit_widths);
-    let function_param_types = collect_function_param_types(krate, &bit_widths);
-    let function_return_types = collect_function_return_types(krate);
-    let function_contexts = collect_function_contexts(krate, &bit_widths);
+    let type_aliases = collect_type_aliases(krate);
+    let struct_fields = collect_struct_fields(krate, &bit_widths, &type_aliases);
+    let global_vars = collect_global_vars(krate, &bit_widths, &type_aliases);
+    let global_const_arrays = collect_global_const_arrays(krate, &bit_widths, &type_aliases);
+    let function_param_types =
+        collect_function_param_types(krate, &bit_widths, &type_aliases);
+    let function_return_types = collect_function_return_types(krate, &bit_widths, &type_aliases);
+    let function_contexts = collect_function_contexts(krate, &bit_widths, &type_aliases);
     let mut visitor = RemoveRedundantIntegerCasts {
         bit_widths,
+        type_aliases,
         global_vars,
+        global_const_arrays,
         struct_fields,
         function_param_types,
         function_return_types,
@@ -186,18 +203,32 @@ fn remove_redundant_integer_casts(krate: &mut Crate, bit_widths: BitWidths) {
         local_scopes: Vec::new(),
         current_return_types: Vec::new(),
         current_module_path: Vec::new(),
+        changed: false,
     };
-    visitor.visit_crate(krate);
+
+    // Removing one cast can expose another cast that then satisfies the same
+    // constraints, e.g. `let x: i32 = 0 as i32 as i32;`. Every successful
+    // rewrite removes one Cast node, so this fixed-point iteration terminates.
+    loop {
+        visitor.changed = false;
+        visitor.visit_crate(krate);
+        if !visitor.changed {
+            break;
+        }
+    }
 }
 
 impl MutVisitor for RemoveRedundantIntegerCasts {
     fn visit_crate(&mut self, krate: &mut Crate) {
         let mut module_path = Vec::new();
-        remove_redundant_casts_in_item_initializers(
+        if remove_redundant_casts_in_item_initializers(
             &mut krate.items,
             &self.bit_widths,
+            &self.type_aliases,
             &mut module_path,
-        );
+        ) {
+            self.changed = true;
+        }
         visit_items_with_module_path(&mut krate.items, self);
     }
 
@@ -213,22 +244,35 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
         }
         for stmt in block.stmts.iter_mut() {
             if let StmtKind::Item(ref mut item) = stmt.kind {
-                remove_redundant_casts_in_item_initializer(
+                if remove_redundant_casts_in_item_initializer(
                     item,
                     &self.bit_widths,
+                    &self.type_aliases,
                     &self.current_module_path,
-                );
+                ) {
+                    self.changed = true;
+                }
                 match item.kind {
                     ItemKind::Static(ref ty, ..) => {
                         if let Some(type_info) =
-                            type_info_from_ty(ty, &self.bit_widths, &self.current_module_path)
+                            type_info_from_ty(
+                                ty,
+                                &self.bit_widths,
+                                &self.type_aliases,
+                                &self.current_module_path,
+                            )
                         {
                             self.insert_local_var(item.ident.name.to_string(), type_info);
                         }
                     }
                     ItemKind::Const(_, ref ty, ..) => {
                         if let Some(type_info) =
-                            type_info_from_ty(ty, &self.bit_widths, &self.current_module_path)
+                            type_info_from_ty(
+                                ty,
+                                &self.bit_widths,
+                                &self.type_aliases,
+                                &self.current_module_path,
+                            )
                         {
                             self.insert_local_var(item.ident.name.to_string(), type_info);
                         }
@@ -246,29 +290,51 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
 
     fn visit_local(&mut self, local: &mut P<Local>) {
         let expected_type = match local.ty {
-            Some(ref expected_ty) => {
-                type_info_from_ty(expected_ty, &self.bit_widths, &self.current_module_path)
-            }
-            None => None,
+            Some(ref expected_ty) => type_info_from_ty(
+                expected_ty,
+                &self.bit_widths,
+                &self.type_aliases,
+                &self.current_module_path,
+            ),
+            None => match &local.kind {
+                LocalKind::Init(init) | LocalKind::InitElse(init, _) => self
+                    .type_info_for_expr(init)
+                    .filter(|info| array_or_slice_element_type(info).is_some()),
+                LocalKind::Decl => None,
+            },
         };
+        // Even an unrecognized local binding shadows a global with the same
+        // name. Recording it as Unknown prevents case 4.m from mistaking a
+        // custom Index implementation for the shadowed global array.
+        if let Some(name) = local_name(local) {
+            self.insert_local_var(
+                name,
+                expected_type.clone().unwrap_or(TypeInfo::Unknown),
+            );
+        }
         if let Some(expected_type) = expected_type {
-            if let Some(name) = local_name(local) {
-                self.insert_local_var(name, expected_type.clone());
-            }
             match local.kind {
                 LocalKind::Init(ref mut init) => {
-                    remove_casts_if_redundant_for_expected_type(
+                    if remove_redundant_literal_casts_for_expected_type(
                         init,
                         &expected_type,
                         &self.bit_widths,
-                    );
+                        &self.type_aliases,
+                        &self.current_module_path,
+                    ) {
+                        self.changed = true;
+                    }
                 }
                 LocalKind::InitElse(ref mut init, _) => {
-                    remove_casts_if_redundant_for_expected_type(
+                    if remove_redundant_literal_casts_for_expected_type(
                         init,
                         &expected_type,
                         &self.bit_widths,
-                    );
+                        &self.type_aliases,
+                        &self.current_module_path,
+                    ) {
+                        self.changed = true;
+                    }
                 }
                 LocalKind::Decl => {}
             }
@@ -282,12 +348,28 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
                 if let Some(TypeInfo::Integer(expected_type)) =
                     self.expected_type_for_assignment_lhs(lhs)
                 {
-                    remove_cast_if_redundant(rhs, expected_type, &self.bit_widths);
+                    if remove_redundant_literal_cast(
+                        rhs,
+                        expected_type,
+                        &self.bit_widths,
+                        &self.type_aliases,
+                        &self.current_module_path,
+                    ) {
+                        self.changed = true;
+                    }
                 }
             }
             ExprKind::Ret(Some(ref mut ret_expr)) => {
                 if let Some(Some(expected_type)) = self.current_return_types.last() {
-                    remove_cast_if_redundant(ret_expr, *expected_type, &self.bit_widths);
+                    if remove_redundant_literal_cast(
+                        ret_expr,
+                        *expected_type,
+                        &self.bit_widths,
+                        &self.type_aliases,
+                        &self.current_module_path,
+                    ) {
+                        self.changed = true;
+                    }
                 }
             }
             ExprKind::Call(ref callee, ref mut args) => {
@@ -303,7 +385,15 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
                             for (arg, expected_type) in args.iter_mut().zip(param_types.into_iter())
                             {
                                 if let Some(TypeInfo::Integer(expected_type)) = expected_type {
-                                    remove_cast_if_redundant(arg, expected_type, &self.bit_widths);
+                                    if remove_redundant_literal_cast(
+                                        arg,
+                                        expected_type,
+                                        &self.bit_widths,
+                                        &self.type_aliases,
+                                        &self.current_module_path,
+                                    ) {
+                                        self.changed = true;
+                                    }
                                 }
                             }
                         }
@@ -322,11 +412,15 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
                             if let Some(TypeInfo::Integer(expected_type)) =
                                 field_types.get(&field_name)
                             {
-                                remove_cast_if_redundant(
+                                if remove_redundant_literal_cast(
                                     &mut field.expr,
                                     *expected_type,
                                     &self.bit_widths,
-                                );
+                                    &self.type_aliases,
+                                    &self.current_module_path,
+                                ) {
+                                    self.changed = true;
+                                }
                             }
                         }
                     }
@@ -334,7 +428,41 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
             }
             ExprKind::Binary(ref op, ref mut left, ref mut right) => {
                 if is_integer_comparison_op(op.node) {
-                    self.remove_redundant_casts_in_comparison(left, right);
+                    self.remove_redundant_literal_casts_in_comparison(left, right);
+                }
+            }
+            ExprKind::Index(ref base, ref mut index) => {
+                // Case 4.m: only built-in array/slice indexing has a `usize`
+                // index. Do not assume that arbitrary Index/IndexMut impls do.
+                if self.is_array_or_slice_index_base(base) {
+                    if remove_redundant_literal_cast(
+                        index,
+                        IntegerType::Primitive("usize"),
+                        &self.bit_widths,
+                        &self.type_aliases,
+                        &self.current_module_path,
+                    ) {
+                        self.changed = true;
+                    }
+                }
+            }
+            ExprKind::Cast(ref mut inner_expr, ref cast_ty) => {
+                // Case 4.a: in `L as T as U` and `(L as T) as U`, the outer
+                // cast supplies U as the expected type of the inner cast.
+                if let Some(expected_type) = integer_type_from_ty(
+                    cast_ty,
+                    &self.current_module_path,
+                    &self.type_aliases,
+                ) {
+                    if remove_redundant_literal_cast(
+                        inner_expr,
+                        expected_type,
+                        &self.bit_widths,
+                        &self.type_aliases,
+                        &self.current_module_path,
+                    ) {
+                        self.changed = true;
+                    }
                 }
             }
             _ => {}
@@ -366,49 +494,72 @@ fn visit_items_with_module_path(
 fn remove_redundant_casts_in_item_initializers(
     items: &mut Vec<P<Item>>,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &mut Vec<String>,
-) {
+) -> bool {
+    let mut changed = false;
     for item in items.iter_mut() {
-        remove_redundant_casts_in_item_initializer(item, bit_widths, module_path);
+        changed |= remove_redundant_casts_in_item_initializer(
+            item,
+            bit_widths,
+            type_aliases,
+            module_path,
+        );
         let item_name = item.ident.name.to_string();
         if let ItemKind::Mod(_, ModKind::Loaded(ref mut module_items, ..)) = item.kind {
             module_path.push(item_name);
-            remove_redundant_casts_in_item_initializers(module_items, bit_widths, module_path);
+            changed |= remove_redundant_casts_in_item_initializers(
+                module_items,
+                bit_widths,
+                type_aliases,
+                module_path,
+            );
             module_path.pop();
         }
     }
+    changed
 }
 
 fn remove_redundant_casts_in_item_initializer(
     item: &mut P<Item>,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &[String],
-) {
+) -> bool {
     match item.kind {
         ItemKind::Static(ref ty, _, ref mut init) => {
             if let Some(ref mut init_expr) = *init {
-                if let Some(expected_type) = type_info_from_ty(ty, bit_widths, module_path) {
-                    remove_casts_if_redundant_for_expected_type(
+                if let Some(expected_type) =
+                    type_info_from_ty(ty, bit_widths, type_aliases, module_path)
+                {
+                    return remove_redundant_literal_casts_for_expected_type(
                         init_expr,
                         &expected_type,
                         bit_widths,
+                        type_aliases,
+                        module_path,
                     );
                 }
             }
         }
         ItemKind::Const(_, ref ty, ref mut init) => {
             if let Some(ref mut init_expr) = *init {
-                if let Some(expected_type) = type_info_from_ty(ty, bit_widths, module_path) {
-                    remove_casts_if_redundant_for_expected_type(
+                if let Some(expected_type) =
+                    type_info_from_ty(ty, bit_widths, type_aliases, module_path)
+                {
+                    return remove_redundant_literal_casts_for_expected_type(
                         init_expr,
                         &expected_type,
                         bit_widths,
+                        type_aliases,
+                        module_path,
                     );
                 }
             }
         }
         _ => {}
     }
+    false
 }
 
 impl RemoveRedundantIntegerCasts {
@@ -427,8 +578,18 @@ impl RemoveRedundantIntegerCasts {
                 }
             }
         }
-        let key = resolve_path_in_map(path, &self.current_module_path, &self.global_vars)?;
-        self.global_vars.get(&key).cloned()
+        if let Some(key) = resolve_path_in_map(path, &self.current_module_path, &self.global_vars) {
+            return self.global_vars.get(&key).cloned();
+        }
+        let key = resolve_path_in_map(path, &self.current_module_path, &self.global_const_arrays)?;
+        self.global_const_arrays.get(&key).cloned()
+    }
+
+    fn is_array_or_slice_index_base(&self, base: &Expr) -> bool {
+        self.type_info_for_expr(base)
+            .as_ref()
+            .and_then(array_or_slice_element_type)
+            .is_some()
     }
 
     fn function_context_for_block(&self, span: Span) -> Option<&FunctionContext> {
@@ -442,14 +603,34 @@ impl RemoveRedundantIntegerCasts {
         self.type_info_for_expr(lhs)
     }
 
-    fn remove_redundant_casts_in_comparison(&self, left: &mut P<Expr>, right: &mut P<Expr>) {
+    fn remove_redundant_literal_casts_in_comparison(
+        &mut self,
+        left: &mut P<Expr>,
+        right: &mut P<Expr>,
+    ) {
         let left_type = self.type_info_for_expr(left);
         let right_type = self.type_info_for_expr(right);
         if let Some(TypeInfo::Integer(expected_type)) = right_type {
-            remove_cast_if_redundant(left, expected_type, &self.bit_widths);
+            if remove_redundant_literal_cast(
+                left,
+                expected_type,
+                &self.bit_widths,
+                &self.type_aliases,
+                &self.current_module_path,
+            ) {
+                self.changed = true;
+            }
         }
         if let Some(TypeInfo::Integer(expected_type)) = left_type {
-            remove_cast_if_redundant(right, expected_type, &self.bit_widths);
+            if remove_redundant_literal_cast(
+                right,
+                expected_type,
+                &self.bit_widths,
+                &self.type_aliases,
+                &self.current_module_path,
+            ) {
+                self.changed = true;
+            }
         }
     }
 
@@ -464,14 +645,34 @@ impl RemoveRedundantIntegerCasts {
             ExprKind::Unary(UnOp::Deref, ref inner) => {
                 let pointer_type = self.type_info_for_expr(inner)?;
                 match pointer_type {
-                    TypeInfo::Pointer(inner_type) => Some(*inner_type),
+                    TypeInfo::Pointer(inner_type) | TypeInfo::Reference(inner_type) => {
+                        Some(*inner_type)
+                    }
                     _ => None,
                 }
             }
+            ExprKind::AddrOf(BorrowKind::Ref, _, ref inner) => Some(TypeInfo::Reference(
+                Box::new(self.type_info_for_expr(inner)?),
+            )),
+            ExprKind::AddrOf(BorrowKind::Raw, _, ref inner) => Some(TypeInfo::Pointer(
+                Box::new(self.type_info_for_expr(inner)?),
+            )),
+            ExprKind::Array(ref elements) => Some(TypeInfo::Array(Box::new(
+                elements.first()
+                    .and_then(|element| self.type_info_for_expr(element))
+                    .unwrap_or(TypeInfo::Unknown),
+            ))),
+            ExprKind::Repeat(ref element, _) => Some(TypeInfo::Array(Box::new(
+                self.type_info_for_expr(element).unwrap_or(TypeInfo::Unknown),
+            ))),
             ExprKind::Index(ref base, _) => {
                 let base_type = self.type_info_for_expr(base)?;
+                if let Some(element_type) = array_or_slice_element_type(&base_type) {
+                    return Some(element_type);
+                }
                 match base_type {
-                    TypeInfo::Array(element_type) => Some(*element_type),
+                    // Preserve the old pointer-element analysis. It does not
+                    // qualify the base for the new array/slice index rewrite.
                     TypeInfo::Pointer(element_type) => Some(*element_type),
                     _ => None,
                 }
@@ -493,7 +694,7 @@ impl RemoveRedundantIntegerCasts {
                     &self.function_return_types,
                 )?;
                 match self.function_return_types.get(&function_key) {
-                    Some(Some(return_type)) => Some(TypeInfo::Integer(*return_type)),
+                    Some(Some(return_type)) => Some(return_type.clone()),
                     _ => None,
                 }
             }
@@ -505,6 +706,7 @@ impl RemoveRedundantIntegerCasts {
     fn field_type(&self, base_type: TypeInfo, field_name: &str) -> Option<TypeInfo> {
         let struct_path = match base_type {
             TypeInfo::Struct(struct_path) => struct_path,
+            TypeInfo::Reference(inner) => return self.field_type(*inner, field_name),
             _ => return None,
         };
         for candidate in struct_path.candidates {
@@ -513,6 +715,16 @@ impl RemoveRedundantIntegerCasts {
             }
         }
         None
+    }
+}
+
+// Built-in indexing uses usize for arrays and slices, including any number of
+// shared or mutable reference layers. A raw pointer is not auto-dereferenced.
+fn array_or_slice_element_type(base_type: &TypeInfo) -> Option<TypeInfo> {
+    match base_type {
+        TypeInfo::Array(element) | TypeInfo::Slice(element) => Some((**element).clone()),
+        TypeInfo::Reference(inner) => array_or_slice_element_type(inner),
+        _ => None,
     }
 }
 
@@ -608,19 +820,62 @@ fn local_name(local: &Local) -> Option<String> {
 // Analysis helpers
 // -----------------------------------------------------------------------------
 
+fn collect_type_aliases(krate: &Crate) -> HashMap<String, TypeAliasInfo> {
+    let mut aliases = HashMap::new();
+    let mut module_path = Vec::new();
+    collect_type_aliases_from_items(&krate.items, &mut module_path, &mut aliases);
+    aliases
+}
+
+fn collect_type_aliases_from_items(
+    items: &[P<Item>],
+    module_path: &mut Vec<String>,
+    aliases: &mut HashMap<String, TypeAliasInfo>,
+) {
+    for item in items {
+        match item.kind {
+            ItemKind::TyAlias(ref alias) => {
+                if let Some(ref target) = alias.ty {
+                    aliases.insert(
+                        qualified_item_name(module_path, &item.ident.name.to_string()),
+                        TypeAliasInfo {
+                            target: target.clone(),
+                            module_path: module_path.to_vec(),
+                        },
+                    );
+                }
+            }
+            ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
+                module_path.push(item.ident.name.to_string());
+                collect_type_aliases_from_items(module_items, module_path, aliases);
+                module_path.pop();
+            }
+            _ => {}
+        }
+    }
+}
+
 fn collect_struct_fields(
     krate: &Crate,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
 ) -> HashMap<String, HashMap<String, TypeInfo>> {
     let mut structs = HashMap::new();
     let mut module_path = Vec::new();
-    collect_struct_fields_from_items(&krate.items, bit_widths, &mut module_path, &mut structs);
+    collect_struct_fields_from_items(
+        &krate.items,
+        bit_widths,
+        type_aliases,
+        &mut module_path,
+        &mut structs,
+    );
     structs
 }
 
 fn collect_struct_fields_from_items(
     items: &[P<Item>],
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &mut Vec<String>,
     structs: &mut HashMap<String, HashMap<String, TypeInfo>>,
 ) {
@@ -631,6 +886,7 @@ fn collect_struct_fields_from_items(
                 collect_fields_from_variant_data(
                     variant_data,
                     bit_widths,
+                    type_aliases,
                     module_path,
                     &mut fields,
                 );
@@ -641,7 +897,13 @@ fn collect_struct_fields_from_items(
             }
             ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
                 module_path.push(item.ident.name.to_string());
-                collect_struct_fields_from_items(module_items, bit_widths, module_path, structs);
+                collect_struct_fields_from_items(
+                    module_items,
+                    bit_widths,
+                    type_aliases,
+                    module_path,
+                    structs,
+                );
                 module_path.pop();
             }
             _ => {}
@@ -652,12 +914,15 @@ fn collect_struct_fields_from_items(
 fn collect_fields_from_variant_data(
     variant_data: &VariantData,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &[String],
     fields: &mut HashMap<String, TypeInfo>,
 ) {
     for field in variant_data.fields() {
         if let Some(ident) = field.ident {
-            if let Some(type_info) = type_info_from_ty(&field.ty, bit_widths, module_path) {
+            if let Some(type_info) =
+                type_info_from_ty(&field.ty, bit_widths, type_aliases, module_path)
+            {
                 fields.insert(ident.name.to_string(), type_info);
             }
         }
@@ -667,32 +932,67 @@ fn collect_fields_from_variant_data(
 fn collect_global_vars(
     krate: &Crate,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
 ) -> HashMap<String, TypeInfo> {
     let mut vars = HashMap::new();
     let mut module_path = Vec::new();
-    collect_global_vars_from_items(&krate.items, bit_widths, &mut module_path, &mut vars);
+    collect_global_vars_from_items(
+        &krate.items,
+        bit_widths,
+        type_aliases,
+        &mut module_path,
+        &mut vars,
+    );
     vars
 }
 
 fn collect_global_vars_from_items(
     items: &[P<Item>],
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &mut Vec<String>,
     vars: &mut HashMap<String, TypeInfo>,
 ) {
     for item in items {
         match item.kind {
             ItemKind::Static(ref ty, ..) => {
-                if let Some(type_info) = type_info_from_ty(ty, bit_widths, module_path) {
+                if let Some(type_info) =
+                    type_info_from_ty(ty, bit_widths, type_aliases, module_path)
+                {
                     vars.insert(
                         qualified_item_name(module_path, &item.ident.name.to_string()),
                         type_info,
                     );
                 }
             }
+            ItemKind::ForeignMod(ref foreign_mod) => {
+                // Extern statics are global values as well. Their declared types
+                // allow built-in array/slice indexing to be recognized in case 4.m.
+                for foreign_item in &foreign_mod.items {
+                    if let ForeignItemKind::Static(ref ty, ..) = foreign_item.kind {
+                        if let Some(type_info) =
+                            type_info_from_ty(ty, bit_widths, type_aliases, module_path)
+                        {
+                            vars.insert(
+                                qualified_item_name(
+                                    module_path,
+                                    &foreign_item.ident.name.to_string(),
+                                ),
+                                type_info,
+                            );
+                        }
+                    }
+                }
+            }
             ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
                 module_path.push(item.ident.name.to_string());
-                collect_global_vars_from_items(module_items, bit_widths, module_path, vars);
+                collect_global_vars_from_items(
+                    module_items,
+                    bit_widths,
+                    type_aliases,
+                    module_path,
+                    vars,
+                );
                 module_path.pop();
             }
             _ => {}
@@ -700,15 +1000,64 @@ fn collect_global_vars_from_items(
     }
 }
 
+// Constants are also valid array/slice receivers for case 4.m. Keep this
+// distinct from the existing globals map to avoid expanding unrelated cases.
+fn collect_global_const_arrays(
+    krate: &Crate,
+    bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
+) -> HashMap<String, TypeInfo> {
+    fn collect(
+        items: &[P<Item>],
+        bit_widths: &BitWidths,
+        type_aliases: &HashMap<String, TypeAliasInfo>,
+        module_path: &mut Vec<String>,
+        arrays: &mut HashMap<String, TypeInfo>,
+    ) {
+        for item in items {
+            match item.kind {
+                ItemKind::Const(_, ref ty, ..) => {
+                    if let Some(info) = type_info_from_ty(ty, bit_widths, type_aliases, module_path) {
+                        if array_or_slice_element_type(&info).is_some() {
+                            arrays.insert(
+                                qualified_item_name(module_path, &item.ident.name.to_string()),
+                                info,
+                            );
+                        }
+                    }
+                }
+                ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
+                    module_path.push(item.ident.name.to_string());
+                    collect(module_items, bit_widths, type_aliases, module_path, arrays);
+                    module_path.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut arrays = HashMap::new();
+    collect(
+        &krate.items,
+        bit_widths,
+        type_aliases,
+        &mut Vec::new(),
+        &mut arrays,
+    );
+    arrays
+}
+
 fn collect_function_param_types(
     krate: &Crate,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
 ) -> HashMap<String, Vec<Option<TypeInfo>>> {
     let mut functions = HashMap::new();
     let mut module_path = Vec::new();
     collect_function_param_types_from_items(
         &krate.items,
         bit_widths,
+        type_aliases,
         &mut module_path,
         &mut functions,
     );
@@ -718,6 +1067,7 @@ fn collect_function_param_types(
 fn collect_function_param_types_from_items(
     items: &[P<Item>],
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &mut Vec<String>,
     functions: &mut HashMap<String, Vec<Option<TypeInfo>>>,
 ) {
@@ -726,7 +1076,12 @@ fn collect_function_param_types_from_items(
             ItemKind::Fn(ref func) => {
                 let mut params = Vec::new();
                 for param in &func.sig.decl.inputs {
-                    params.push(type_info_from_ty(&param.ty, bit_widths, module_path));
+                    params.push(type_info_from_ty(
+                        &param.ty,
+                        bit_widths,
+                        type_aliases,
+                        module_path,
+                    ));
                 }
                 functions.insert(
                     qualified_item_name(module_path, &item.ident.name.to_string()),
@@ -741,6 +1096,7 @@ fn collect_function_param_types_from_items(
                             params.push(type_info_from_ty(
                                 &param.ty,
                                 bit_widths,
+                                type_aliases,
                                 module_path,
                             ));
                         }
@@ -759,6 +1115,7 @@ fn collect_function_param_types_from_items(
                 collect_function_param_types_from_items(
                     module_items,
                     bit_widths,
+                    type_aliases,
                     module_path,
                     functions,
                 );
@@ -771,23 +1128,33 @@ fn collect_function_param_types_from_items(
 
 fn collect_function_return_types(
     krate: &Crate,
-) -> HashMap<String, Option<IntegerType>> {
+    bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
+) -> HashMap<String, Option<TypeInfo>> {
     let mut functions = HashMap::new();
     let mut module_path = Vec::new();
-    collect_function_return_types_from_items(&krate.items, &mut module_path, &mut functions);
+    collect_function_return_types_from_items(
+        &krate.items,
+        bit_widths,
+        type_aliases,
+        &mut module_path,
+        &mut functions,
+    );
     functions
 }
 
 fn collect_function_return_types_from_items(
     items: &[P<Item>],
+    bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &mut Vec<String>,
-    functions: &mut HashMap<String, Option<IntegerType>>,
+    functions: &mut HashMap<String, Option<TypeInfo>>,
 ) {
     for item in items {
         match item.kind {
             ItemKind::Fn(ref func) => {
                 let return_type = match func.sig.decl.output {
-                    FnRetTy::Ty(ref ty) => integer_type_from_ty(ty),
+                    FnRetTy::Ty(ref ty) => type_info_from_ty(ty, bit_widths, type_aliases, module_path),
                     FnRetTy::Default(_) => None,
                 };
                 functions.insert(
@@ -799,7 +1166,9 @@ fn collect_function_return_types_from_items(
                 for foreign_item in &foreign_mod.items {
                     if let ForeignItemKind::Fn(ref func) = foreign_item.kind {
                         let return_type = match func.sig.decl.output {
-                            FnRetTy::Ty(ref ty) => integer_type_from_ty(ty),
+                            FnRetTy::Ty(ref ty) => {
+                                type_info_from_ty(ty, bit_widths, type_aliases, module_path)
+                            }
                             FnRetTy::Default(_) => None,
                         };
                         functions.insert(
@@ -814,7 +1183,13 @@ fn collect_function_return_types_from_items(
             }
             ItemKind::Mod(_, ModKind::Loaded(ref module_items, ..)) => {
                 module_path.push(item.ident.name.to_string());
-                collect_function_return_types_from_items(module_items, module_path, functions);
+                collect_function_return_types_from_items(
+                    module_items,
+                    bit_widths,
+                    type_aliases,
+                    module_path,
+                    functions,
+                );
                 module_path.pop();
             }
             _ => {}
@@ -825,16 +1200,24 @@ fn collect_function_return_types_from_items(
 fn collect_function_contexts(
     krate: &Crate,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
 ) -> Vec<(Span, FunctionContext)> {
     let mut contexts = Vec::new();
     let mut module_path = Vec::new();
-    collect_function_contexts_from_items(&krate.items, bit_widths, &mut module_path, &mut contexts);
+    collect_function_contexts_from_items(
+        &krate.items,
+        bit_widths,
+        type_aliases,
+        &mut module_path,
+        &mut contexts,
+    );
     contexts
 }
 
 fn collect_function_contexts_from_items(
     items: &[P<Item>],
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &mut Vec<String>,
     contexts: &mut Vec<(Span, FunctionContext)>,
 ) {
@@ -845,7 +1228,12 @@ fn collect_function_contexts_from_items(
                     let mut params = HashMap::new();
                     for param in &func.sig.decl.inputs {
                         if let Some(type_info) =
-                            type_info_from_ty(&param.ty, bit_widths, module_path)
+                            type_info_from_ty(
+                                &param.ty,
+                                bit_widths,
+                                type_aliases,
+                                module_path,
+                            )
                         {
                             if let Some(name) = pat_name(&param.pat) {
                                 params.insert(name, type_info);
@@ -853,7 +1241,9 @@ fn collect_function_contexts_from_items(
                         }
                     }
                     let return_type = match func.sig.decl.output {
-                        FnRetTy::Ty(ref ty) => integer_type_from_ty(ty),
+                        FnRetTy::Ty(ref ty) => {
+                            integer_type_from_ty(ty, module_path, type_aliases)
+                        }
                         FnRetTy::Default(_) => None,
                     };
                     contexts.push((
@@ -870,6 +1260,7 @@ fn collect_function_contexts_from_items(
                 collect_function_contexts_from_items(
                     module_items,
                     bit_widths,
+                    type_aliases,
                     module_path,
                     contexts,
                 );
@@ -905,101 +1296,210 @@ enum IntegerLiteralValue {
     Negative(u128),
 }
 
-fn remove_cast_if_redundant(
+fn remove_redundant_literal_cast(
     expr: &mut P<Expr>,
     expected_type: IntegerType,
     bit_widths: &BitWidths,
-) {
+    type_aliases: &HashMap<String, TypeAliasInfo>,
+    module_path: &[String],
+) -> bool {
     let (inner_expr, cast_ty) = match expr.kind {
         ExprKind::Cast(ref inner_expr, ref cast_ty) => (inner_expr, cast_ty),
         ExprKind::Paren(ref paren_expr) => match paren_expr.kind {
             ExprKind::Cast(ref inner_expr, ref cast_ty) => (inner_expr, cast_ty),
-            _ => return,
+            _ => return false,
         },
-        _ => return,
+        _ => return false,
     };
-    let cast_type = match integer_type_from_ty(cast_ty) {
+
+    // T may itself be a type alias, possibly through multiple alias levels.
+    let cast_type = match integer_type_from_ty(cast_ty, module_path, type_aliases) {
         Some(ty) => ty,
-        None => return,
+        None => return false,
     };
-    if expected_type != cast_type {
-        return;
-    }
+
     let value = match unsuffixed_integer_literal_value(inner_expr) {
         Some(value) => value,
-        None => return,
+        None => return false,
     };
-    if !integer_value_fits_type(value, cast_type, bit_widths) {
-        return;
+
+    // The literal must preserve its mathematical value both through the cast
+    // being removed (T) and in the surrounding expected integer type (U).
+    if !integer_value_fits_type(value, cast_type, bit_widths)
+        || !integer_value_fits_type(value, expected_type, bit_widths)
+    {
+        return false;
     }
+
     *expr = inner_expr.clone();
+    true
 }
 
-fn remove_casts_if_redundant_for_expected_type(
+fn remove_redundant_literal_casts_for_expected_type(
     expr: &mut P<Expr>,
     expected_type: &TypeInfo,
     bit_widths: &BitWidths,
-) {
+    type_aliases: &HashMap<String, TypeAliasInfo>,
+    module_path: &[String],
+) -> bool {
     match expected_type {
-        TypeInfo::Integer(expected_integer_type) => {
-            remove_cast_if_redundant(expr, *expected_integer_type, bit_widths);
-        }
+        TypeInfo::Integer(expected_integer_type) => remove_redundant_literal_cast(
+            expr,
+            *expected_integer_type,
+            bit_widths,
+            type_aliases,
+            module_path,
+        ),
         TypeInfo::Array(element_type) => match expr.kind {
             ExprKind::Array(ref mut elements) => {
+                let mut changed = false;
                 for element in elements.iter_mut() {
-                    remove_casts_if_redundant_for_expected_type(
+                    changed |= remove_redundant_literal_casts_for_expected_type(
                         element,
                         element_type,
                         bit_widths,
+                        type_aliases,
+                        module_path,
                     );
                 }
+                changed
             }
             ExprKind::Repeat(ref mut element, _) => {
-                remove_casts_if_redundant_for_expected_type(
+                remove_redundant_literal_casts_for_expected_type(
                     element,
                     element_type,
                     bit_widths,
-                );
+                    type_aliases,
+                    module_path,
+                )
             }
-            _ => {}
+            _ => false,
         },
-        TypeInfo::Pointer(_) | TypeInfo::Struct(_) => {}
+        TypeInfo::Pointer(_)
+        | TypeInfo::Reference(_)
+        | TypeInfo::Slice(_)
+        | TypeInfo::Struct(_)
+        | TypeInfo::Unknown => false,
     }
 }
 
 fn type_info_from_ty(
     ty: &Ty,
     bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
     module_path: &[String],
 ) -> Option<TypeInfo> {
-    if let Some(integer_type) = integer_type_from_ty(ty) {
+    let mut resolving = HashSet::new();
+    type_info_from_ty_inner(ty, bit_widths, type_aliases, module_path, &mut resolving)
+}
+
+fn type_info_from_ty_inner(
+    ty: &Ty,
+    bit_widths: &BitWidths,
+    type_aliases: &HashMap<String, TypeAliasInfo>,
+    module_path: &[String],
+    resolving: &mut HashSet<String>,
+) -> Option<TypeInfo> {
+    if let Some(integer_type) = integer_type_from_ty(ty, module_path, type_aliases) {
         if let IntegerType::C(c_type) = integer_type {
             let _ = c_integer_width(c_type, bit_widths);
         }
         return Some(TypeInfo::Integer(integer_type));
     }
+
     match ty.kind {
         TyKind::Path(None, ref path) => {
-            let struct_path = TypePath::from_ast_path(path, module_path)?;
-            Some(TypeInfo::Struct(struct_path))
+            // A type alias can also resolve to an array, slice, or reference.
+            // Track aliases across modules and reject recursive resolutions.
+            if let Some(key) = resolve_path_in_map(path, module_path, type_aliases) {
+                if !resolving.insert(key.clone()) {
+                    return None;
+                }
+                let alias = type_aliases.get(&key)?;
+                let result = type_info_from_ty_inner(
+                    &alias.target,
+                    bit_widths,
+                    type_aliases,
+                    &alias.module_path,
+                    resolving,
+                );
+                resolving.remove(&key);
+                if result.is_some() {
+                    return result;
+                }
+            }
+            Some(TypeInfo::Struct(TypePath::from_ast_path(path, module_path)?))
         }
         TyKind::Ptr(ref mut_ty) => {
-            let pointee_type = type_info_from_ty(&mut_ty.ty, bit_widths, module_path)?;
-            Some(TypeInfo::Pointer(Box::new(pointee_type)))
+            let pointee = type_info_from_ty_inner(
+                &mut_ty.ty, bit_widths, type_aliases, module_path, resolving,
+            ).unwrap_or(TypeInfo::Unknown);
+            Some(TypeInfo::Pointer(Box::new(pointee)))
+        }
+        TyKind::Rptr(_, ref mut_ty) => {
+            let referred = type_info_from_ty_inner(
+                &mut_ty.ty, bit_widths, type_aliases, module_path, resolving,
+            ).unwrap_or(TypeInfo::Unknown);
+            Some(TypeInfo::Reference(Box::new(referred)))
         }
         TyKind::Array(ref element_ty, _) => {
-            let element_type = type_info_from_ty(element_ty, bit_widths, module_path)?;
-            Some(TypeInfo::Array(Box::new(element_type)))
+            let element = type_info_from_ty_inner(
+                element_ty, bit_widths, type_aliases, module_path, resolving,
+            ).unwrap_or(TypeInfo::Unknown);
+            Some(TypeInfo::Array(Box::new(element)))
+        }
+        TyKind::Slice(ref element_ty) => {
+            let element = type_info_from_ty_inner(
+                element_ty, bit_widths, type_aliases, module_path, resolving,
+            ).unwrap_or(TypeInfo::Unknown);
+            Some(TypeInfo::Slice(Box::new(element)))
         }
         _ => None,
     }
 }
 
-fn integer_type_from_ty(ty: &Ty) -> Option<IntegerType> {
+fn integer_type_from_ty(
+    ty: &Ty,
+    module_path: &[String],
+    type_aliases: &HashMap<String, TypeAliasInfo>,
+) -> Option<IntegerType> {
+    let mut resolving = HashSet::new();
+    integer_type_from_ty_inner(ty, module_path, type_aliases, &mut resolving)
+}
+
+fn integer_type_from_ty_inner(
+    ty: &Ty,
+    module_path: &[String],
+    type_aliases: &HashMap<String, TypeAliasInfo>,
+    resolving: &mut HashSet<String>,
+) -> Option<IntegerType> {
     let path = match ty.kind {
         TyKind::Path(None, ref path) => path,
         _ => return None,
     };
+
+    if let Some(integer_type) = direct_integer_type_from_path(path) {
+        return Some(integer_type);
+    }
+
+    let alias_key = resolve_path_in_map(path, module_path, type_aliases)?;
+    if !resolving.insert(alias_key.clone()) {
+        // Recursive aliases do not resolve to a primitive integer type.
+        return None;
+    }
+
+    let alias = type_aliases.get(&alias_key)?;
+    let result = integer_type_from_ty_inner(
+        &alias.target,
+        &alias.module_path,
+        type_aliases,
+        resolving,
+    );
+    resolving.remove(&alias_key);
+    result
+}
+
+fn direct_integer_type_from_path(path: &rustc_ast::Path) -> Option<IntegerType> {
     if let Some(name) = unqualified_type_name(path) {
         return match name {
             "i8" => Some(IntegerType::Primitive("i8")),
@@ -1019,6 +1519,7 @@ fn integer_type_from_ty(ty: &Ty) -> Option<IntegerType> {
             _ => None,
         };
     }
+
     if is_core_ffi_path(path) {
         let name = path.segments.last()?.ident.name.as_str();
         return match name {
@@ -1040,6 +1541,7 @@ fn integer_type_from_ty(ty: &Ty) -> Option<IntegerType> {
             _ => None,
         };
     }
+
     None
 }
 
