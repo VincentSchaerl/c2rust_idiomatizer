@@ -1,9 +1,9 @@
 use super::{
     adjusted_reference_mutability, array_type_with_literal_length, collect_pattern_binding_names, collect_public_integer_consts,
-    collect_public_integer_type_aliases, fresh_name, integer_type_from_ty, integer_type_range_is_subset,
+    collect_integer_type_aliases, fresh_name, integer_type_from_ty, integer_type_range_is_subset,
     integer_type_source, integer_value_fits_type, record_pattern_binding_name, simple_loop_binding, simple_path_name, strip_parens,
     underlying_integer_type_from_ty, unsuffixed_integer_literal_value, IntegerConstMeta, IntValue,
-    IntegerType, TargetInfo,
+    IntegerType, TargetInfo, LoopBindingOrigins,
 };
 
 use c2rust_refactor::ast_manip::visit_nodes;
@@ -82,7 +82,7 @@ struct FunctionPlan {
 
 #[derive(Default)]
 struct GlobalInfo {
-    aliases: HashMap<DefId, P<Ty>>,
+    all_aliases: HashMap<DefId, P<Ty>>,
     consts: HashMap<DefId, IntegerConstMeta>,
 }
 
@@ -91,6 +91,7 @@ pub(super) fn pass_arrays_as_slices(
     cx: &RefactorCtxt,
     target: TargetInfo,
     transform_public_functions: bool,
+    binding_origins: &LoopBindingOrigins,
 ) {
     // Phase-3 semantic tables still describe the pre-rewrite crate.  The
     // initial transformation deliberately preserves the parameter, call, and
@@ -115,6 +116,7 @@ pub(super) fn pass_arrays_as_slices(
             cx,
             target,
             transform_public_functions,
+            binding_origins,
         ) {
             plans.push(plan);
         }
@@ -180,9 +182,9 @@ pub(super) fn pass_arrays_as_slices(
 }
 
 fn collect_global_info(krate: &Crate, cx: &RefactorCtxt, target: TargetInfo) -> GlobalInfo {
-    let aliases = collect_public_integer_type_aliases(krate, cx);
-    let consts = collect_public_integer_consts(krate, cx, target, &aliases);
-    GlobalInfo { aliases, consts }
+    let all_aliases = collect_integer_type_aliases(krate, cx);
+    let consts = collect_public_integer_consts(krate, cx, target, &all_aliases);
+    GlobalInfo { all_aliases, consts }
 }
 
 fn collect_local_arrays(krate: &Crate, cx: &RefactorCtxt, arrays: &mut HashMap<ArrayKey, ArrayMeta>) {
@@ -229,6 +231,7 @@ fn analyze_function(
     cx: &RefactorCtxt,
     target: TargetInfo,
     transform_public_functions: bool,
+    binding_origins: &LoopBindingOrigins,
 ) -> Option<FunctionPlan> {
     let func = match &item.kind {
         ItemKind::Fn(func) => func,
@@ -278,7 +281,7 @@ fn analyze_function(
                 Some(value) => value,
                 None => continue,
             };
-            let length_integer_ty = match integer_type_from_ty(&length_param.ty) {
+            let length_integer_ty = match underlying_integer_type_from_ty(&length_param.ty, cx, &global_info.all_aliases) {
                 Some(value) => value,
                 None => continue,
             };
@@ -300,6 +303,8 @@ fn analyze_function(
                     &element_ty,
                     cx,
                     target,
+                    binding_origins,
+                    &global_info.all_aliases,
                 ) {
                     loops.push(loop_plan);
                 }
@@ -572,19 +577,21 @@ fn analyze_loop(
     element_ty: &P<Ty>,
     cx: &RefactorCtxt,
     target: TargetInfo,
+    binding_origins: &LoopBindingOrigins,
+    aliases: &HashMap<DefId, P<Ty>>,
 ) -> Option<LoopPlan> {
     let (pat, iter, body) = match &expr.kind {
         ExprKind::ForLoop(pat, iter, body, _) => (pat, iter, body),
         _ => return None,
     };
-    let (induction_hir, induction_name) = simple_loop_binding(pat, cx)?;
+    let (induction_hir, induction_name) = simple_loop_binding(pat, cx, binding_origins)?;
 
     let (start, end) = match &iter.kind {
         ExprKind::Range(Some(start), Some(end), RangeLimits::HalfOpen) => (start, end),
         _ => return None,
     };
-    let induction_ty = zero_start_type(start)?;
-    let length_use_id = match_length_bound(end, length_hir, length_ty, induction_ty, cx, target)?;
+    let induction_ty = zero_start_type(start, cx, aliases)?;
+    let length_use_id = match_length_bound(end, length_hir, length_ty, induction_ty, cx, target, aliases)?;
 
     let mut checker = BodyPointerUseChecker {
         array_hir,
@@ -623,7 +630,7 @@ fn analyze_loop(
     })
 }
 
-fn zero_start_type(expr: &Expr) -> Option<IntegerType> {
+fn zero_start_type(expr: &Expr, cx: &RefactorCtxt, aliases: &HashMap<DefId, P<Ty>>) -> Option<IntegerType> {
     let expr = strip_parens(expr);
     match &expr.kind {
         ExprKind::Lit(lit) => match lit.kind {
@@ -649,7 +656,7 @@ fn zero_start_type(expr: &Expr) -> Option<IntegerType> {
             if unsuffixed_integer_literal_value(strip_parens(inner))
                 == Some(IntValue::NonNegative(0)) =>
         {
-            integer_type_from_ty(ty)
+            underlying_integer_type_from_ty(ty, cx, aliases)
         }
         _ => None,
     }
@@ -662,6 +669,7 @@ fn match_length_bound(
     induction_ty: IntegerType,
     cx: &RefactorCtxt,
     target: TargetInfo,
+    aliases: &HashMap<DefId, P<Ty>>,
 ) -> Option<rustc_ast::NodeId> {
     let expr = strip_parens(expr);
     if expr_resolves_to_local(expr, length_hir, cx) {
@@ -675,7 +683,7 @@ fn match_length_bound(
     if !expr_resolves_to_local(inner, length_hir, cx) {
         return None;
     }
-    let cast_ty = integer_type_from_ty(cast_ty)?;
+    let cast_ty = underlying_integer_type_from_ty(cast_ty, cx, aliases)?;
     if cast_ty != induction_ty || length_ty == induction_ty {
         return None;
     }
@@ -1268,7 +1276,7 @@ fn valid_length_const_argument(
     let mut expr = strip_parens(expr);
     let mut casts = Vec::new();
     while let ExprKind::Cast(inner, ty) = &expr.kind {
-        let integer = match integer_type_from_ty(ty) {
+        let integer = match underlying_integer_type_from_ty(ty, cx, &global_info.all_aliases) {
             Some(value) => value,
             None => return false,
         };
@@ -1334,7 +1342,7 @@ fn valid_sizeof_length_argument(
     let mut expr = strip_parens(expr);
     let mut outer_cast = None;
     if let ExprKind::Cast(inner, ty) = &expr.kind {
-        outer_cast = integer_type_from_ty(ty);
+        outer_cast = underlying_integer_type_from_ty(ty, cx, &global_info.all_aliases);
         if outer_cast.is_none() {
             return false;
         }
@@ -1383,7 +1391,7 @@ fn valid_sizeof_length_argument(
     // The specification requires size_of::<U0>() != 0.  We prove that only
     // for source types for which non-zero size follows without layout queries;
     // unknown/ADT layouts therefore fail closed.
-    if !type_is_known_non_zero_sized(element_ty, cx) {
+    if !type_is_known_non_zero_sized(element_ty, cx, &global_info.all_aliases) {
         return false;
     }
     let len_value = IntValue::NonNegative(array.length);
@@ -1421,7 +1429,7 @@ fn match_casted_sizeof(
         "size_t" => SizeCastKind::SizeT,
         _ => return None,
     };
-    if underlying_integer_type_from_ty(cast_ty, cx, &global_info.aliases)?
+    if underlying_integer_type_from_ty(cast_ty, cx, &global_info.all_aliases)?
         != IntegerType::Primitive("usize")
     {
         return None;
@@ -1463,13 +1471,15 @@ fn size_of_generic_type(expr: &Expr) -> Option<P<Ty>> {
     }
 }
 
-fn type_is_known_non_zero_sized(ty: &Ty, cx: &RefactorCtxt) -> bool {
+fn type_is_known_non_zero_sized(
+    ty: &Ty, cx: &RefactorCtxt, aliases: &HashMap<DefId, P<Ty>>,
+) -> bool {
     // Every primitive integer type accepted by the loop passes has a strictly
     // positive bit width, so size_of::<T>() is known to be non-zero without
     // consulting HIR/typeck for the AST type node.  In particular this avoids
     // rejecting C2Rust-generated size_of::<i32>() expressions on toolchains
     // where RefactorCtxt::opt_node_type does not expose a type for Ty NodeIds.
-    if integer_type_from_ty(ty).is_some() {
+    if underlying_integer_type_from_ty(ty, cx, aliases).is_some() {
         return true;
     }
 

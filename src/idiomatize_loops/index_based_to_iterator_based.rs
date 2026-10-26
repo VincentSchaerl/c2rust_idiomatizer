@@ -1,6 +1,7 @@
 use super::{
     adjusted_reference_mutability, array_len_receiver, collect_pattern_binding_names, expr_matches_loop_binding, fresh_name,
     simple_loop_binding, simple_path_name, strip_parens, unsuffixed_integer_literal_value, IntValue,
+    LoopBindingOrigins,
 };
 
 use c2rust_refactor::command::CommandState;
@@ -29,14 +30,16 @@ struct LoopPlan {
     mutable: bool,
 }
 
-pub(super) fn index_based_to_iterator_based(st: &CommandState, cx: &RefactorCtxt) {
+pub(super) fn index_based_to_iterator_based(
+    st: &CommandState, cx: &RefactorCtxt, binding_origins: &LoopBindingOrigins,
+) {
     let snapshot = {
         let krate = st.krate();
         (*krate).clone()
     };
 
     let mut plans = Vec::new();
-    collect_function_plans(&snapshot.items, cx, &mut plans);
+    collect_function_plans(&snapshot.items, cx, binding_origins, &mut plans);
     if plans.is_empty() {
         return;
     }
@@ -53,6 +56,7 @@ pub(super) fn index_based_to_iterator_based(st: &CommandState, cx: &RefactorCtxt
 fn collect_function_plans(
     items: &[P<Item>],
     cx: &RefactorCtxt,
+    binding_origins: &LoopBindingOrigins,
     plans: &mut Vec<LoopPlan>,
 ) {
     // Item names in the containing module are resolvable throughout each
@@ -74,13 +78,14 @@ fn collect_function_plans(
                     let mut analyzer = FunctionAnalyzer {
                         visible_names,
                         cx,
+                        binding_origins,
                         plans,
                     };
                     analyzer.visit_block(body);
                 }
             }
             ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
-                collect_function_plans(module_items, cx, plans);
+                collect_function_plans(module_items, cx, binding_origins, plans);
             }
             _ => {}
         }
@@ -90,6 +95,7 @@ fn collect_function_plans(
 struct FunctionAnalyzer<'out, 'cx, 'a, 'tcx: 'a> {
     visible_names: HashSet<String>,
     cx: &'cx RefactorCtxt<'a, 'tcx>,
+    binding_origins: &'out LoopBindingOrigins,
     plans: &'out mut Vec<LoopPlan>,
 }
 
@@ -141,7 +147,7 @@ impl<'ast, 'out, 'cx, 'a, 'tcx: 'a> Visitor<'ast> for FunctionAnalyzer<'out, 'cx
             collect_pattern_binding_names(pat, &mut names_for_loop);
             collect_names_in_loop_body(body, &mut names_for_loop);
 
-            if let Some(plan) = analyze_loop(expr, &names_for_loop, self.cx) {
+            if let Some(plan) = analyze_loop(expr, &names_for_loop, self.cx, self.binding_origins) {
                 self.plans.push(plan);
             }
 
@@ -202,12 +208,13 @@ fn analyze_loop(
     expr: &Expr,
     names_for_loop: &HashSet<String>,
     cx: &RefactorCtxt,
+    binding_origins: &LoopBindingOrigins,
 ) -> Option<LoopPlan> {
     let (pat, iter, body) = match &expr.kind {
         ExprKind::ForLoop(pat, iter, body, _) => (pat, iter, body),
         _ => return None,
     };
-    let (induction_hir, induction_name) = simple_loop_binding(pat, cx)?;
+    let (induction_hir, induction_name) = simple_loop_binding(pat, cx, binding_origins)?;
 
     let (start, end) = match &iter.kind {
         ExprKind::Range(Some(start), Some(end), RangeLimits::HalfOpen) => (start, end),

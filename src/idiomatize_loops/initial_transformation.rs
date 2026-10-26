@@ -1,7 +1,8 @@
 use super::{
     integer_type_from_ty, integer_type_width_and_signedness, integer_value_fits_type,
+    underlying_integer_type_from_ty, simple_path_name,
     unsuffixed_integer_literal_value, unsigned_max_for_bits, CIntegerType, IntValue, IntegerType,
-    TargetInfo,
+    TargetInfo, LoopBindingOrigins,
 };
 
 use c2rust_refactor::ast_manip::visit_nodes;
@@ -32,7 +33,7 @@ pub(super) fn initial_transformation(
     st: &CommandState,
     cx: &RefactorCtxt,
     target: TargetInfo,
-) {
+) -> LoopBindingOrigins {
     // All semantic information is collected before the first rewrite.  The HIR
     // and typeck tables describe the pre-transform AST, so we must not try to
     // derive new semantic facts after replacing a loop.
@@ -44,10 +45,11 @@ pub(super) fn initial_transformation(
     let preceding_stmts = collect_preceding_statements(&krate_snapshot);
     let following_stmts = collect_following_statements(&krate_snapshot);
 
+    let mut binding_origins = LoopBindingOrigins::new();
     let mut mcx = MatchCtxt::new(st, cx);
     let pattern = mcx.parse_stmts(
         r#"
-            let $ipat:Pat: $T:Ty = $L:Expr;
+            $start_stmt:Stmt;
             $'label:?Ident: while $cond:Expr {
                 $body:MultiStmt;
                 $incr:Stmt;
@@ -57,29 +59,81 @@ pub(super) fn initial_transformation(
 
     let mut krate = st.krate_mut();
     mut_visit_match_with(mcx, pattern, &mut *krate, |orig, mut mcx| {
-        let ipat = match mcx.bindings.get::<_, P<Pat>>("$ipat") {
-            Some(pat) => pat.clone(),
+        // Rule 1: recognize both `let mut I: T = L;` and `I = L;`.
+        // In the assignment case I is an existing function-local binding and
+        // its declaration must remain in the AST after this rewrite.
+        let first_stmt = match orig.first() {
+            Some(stmt) => stmt,
             None => return,
         };
+        let (induction_hir_id, induction_ty, start, mut for_pat, assignment_origin) =
+            match &first_stmt.kind {
+                StmtKind::Local(local) => {
+                    let induction_hir_id = match induction_binding(&local.pat, cx) {
+                        Some(id) => id,
+                        None => return,
+                    };
+                    let declared_ty = match &local.ty {
+                        Some(ty) => ty,
+                        None => return,
+                    };
+                    let induction_ty = match underlying_integer_type_from_ty(
+                        declared_ty, cx, &type_env.type_aliases,
+                    ) {
+                        Some(ty) => ty,
+                        None => return,
+                    };
+                    let start = match &local.kind {
+                        LocalKind::Init(start) => start.clone(),
+                        _ => return,
+                    };
+                    (induction_hir_id, induction_ty, start, local.pat.clone(), false)
+                }
+                StmtKind::Expr(expr) | StmtKind::Semi(expr) => {
+                    let (lhs, start) = match &expr.kind {
+                        ExprKind::Assign(lhs, start, _) => (lhs, start),
+                        _ => return,
+                    };
+                    let induction_hir_id = match cx.try_resolve_expr_hir(lhs) {
+                        Some(Res::Local(id)) => id,
+                        _ => return,
+                    };
+                    let meta = match type_env.locals.get(&induction_hir_id) {
+                        Some(meta) if meta.origin == BaseOrigin::Local && meta.mutable => meta,
+                        _ => return,
+                    };
+                    let induction_ty = match underlying_integer_type(&meta.type_info) {
+                        Some(ty) => ty,
+                        None => return,
+                    };
+                    let name = match &lhs.kind {
+                        ExprKind::Path(..) => match simple_path_name(lhs) {
+                            Some(name) => name,
+                            None => return,
+                        },
+                        _ => return,
+                    };
+                    // Parse a genuinely new for-binding rather than duplicating
+                    // the NodeId of the pre-existing local declaration.
+                    let pattern_source = format!("for {} in 0..0 {{}}", name);
+                    let pattern_stmts = mcx.parse_stmts(&pattern_source);
+                    let mut for_pat = match pattern_stmts.first().and_then(stmt_expr) {
+                        Some(expr) => match &expr.kind {
+                            ExprKind::ForLoop(pat, _, _, _) => pat.clone(),
+                            _ => return,
+                        },
+                        None => return,
+                    };
+                    // Use the unique original assignment-site span as the
+                    // identity of this new binding. Parsed AST nodes can have
+                    // dummy NodeIds before a subsequent compiler phase assigns
+                    // fresh ones, so the span is a more reliable key here.
+                    for_pat.span = lhs.span;
+                    (induction_hir_id, induction_ty, start.clone(), for_pat, true)
+                }
+                _ => return,
+            };
 
-        let induction_hir_id = match induction_binding(&ipat, cx) {
-            Some(id) => id,
-            None => return,
-        };
-
-        let induction_ty_ast = match mcx.bindings.get::<_, P<Ty>>("$T") {
-            Some(ty) => ty.clone(),
-            None => return,
-        };
-        let induction_ty = match integer_type_from_ty(&induction_ty_ast) {
-            Some(ty) => ty,
-            None => return,
-        };
-
-        let start = match mcx.bindings.get::<_, P<Expr>>("$L") {
-            Some(expr) => expr.clone(),
-            None => return,
-        };
         let start_kind = match classify_start(&start, induction_ty, &type_env, cx) {
             Some(kind) => kind,
             None => return,
@@ -141,7 +195,7 @@ pub(super) fn initial_transformation(
             StmtKind::Semi(expr) | StmtKind::Expr(expr) => expr,
             _ => return,
         };
-        let increment = match classify_increment(incr_expr, induction_hir_id, induction_ty, cx) {
+        let increment = match classify_increment(incr_expr, induction_hir_id, induction_ty, &type_env, cx) {
             Some(increment) => increment,
             None => return,
         };
@@ -164,16 +218,16 @@ pub(super) fn initial_transformation(
             return;
         }
 
-        // Constraint 6: a continue targeting this while loop would skip the
+        // Constraint 7: a continue targeting this while loop would skip the
         // increment in the old loop but not in the for loop.
         if body_has_continue_to_loop(while_body, while_label) {
             return;
         }
 
-        // Constraints 7 and 8. ExprUseVisitor sees explicit borrows as well as
+        // Constraint 8. ExprUseVisitor sees explicit borrows as well as
         // type-adjustment/autoref borrows, so it also covers implicit method
         // receiver borrowing. The increment is excluded because it is removed.
-        // Constraint 7 applies to the original loop *body*, not to the
+        // Constraint 8 applies to the original loop *body*, not to the
         // while condition and not to the increment that will be removed.
         // ExprUseVisitor can report borrow-like uses for expressions in the
         // condition/update, so pass only the body statements before the
@@ -186,9 +240,32 @@ pub(super) fn initial_transformation(
             &loop_body_hir_ids,
             checked_body,
             following,
+            assignment_origin,
+            while_expr.span,
+            &type_env,
             cx,
         ) {
             return;
+        }
+
+        if assignment_origin {
+            // Rule 1.b.ii: the original local can remain in scope outside the
+            // new for-loop only if no references to it were created beforehand
+            // or inside the old while loop, including inferred captures.
+            if type_env.has_forbidden_reference_before_or_during(
+                BaseKey::Local(induction_hir_id), while_expr.span,
+            ) {
+                return;
+            }
+            let reference_facts = match local_stability_facts(
+                induction_hir_id, while_expr.span, &loop_body_hir_ids, cx,
+            ) {
+                Some(facts) => facts,
+                None => return,
+            };
+            if reference_facts.captured_by_reference_before_or_during {
+                return;
+            }
         }
 
         let start_for_ascending = match &start_kind {
@@ -198,9 +275,9 @@ pub(super) fn initial_transformation(
         let start_for_descending = start.clone();
 
         // Normalize N according to the new N'/N''/N''' rules. In particular:
-        // - 4.a double-cast literals become the underlying `_N0`,
-        // - 4.c cast chains around a stable T-value become `_N1`, and
-        // - 4.d cast chains from U4 become a single direct `_N2 as T`.
+        // - 5.a parenthesized literals become the underlying `_N0`,
+        // - 5.c cast chains around a stable T-value become `_N1`, and
+        // - 5.d cast chains from U3 become a single direct `_N2 as T`.
         let normalized_bound = match &bound_kind {
             BoundKind::Literal(_) => match literal_bound_operand(&condition.bound, induction_ty) {
                 Some(expr) => expr,
@@ -208,13 +285,13 @@ pub(super) fn initial_transformation(
             },
             BoundKind::Stable => condition.bound.clone(),
             BoundKind::SameTypeCastStable => {
-                match cast_bound_base_operand(&condition.bound, induction_ty) {
+                match cast_bound_base_operand(&condition.bound, induction_ty, &type_env, cx) {
                     Some(expr) => expr,
                     None => return,
                 }
             }
             BoundKind::CastStable => {
-                match cast_bound_directly_to_t(&condition.bound, induction_ty) {
+                match cast_bound_directly_to_t(&condition.bound, induction_ty, &type_env, cx) {
                     Some(expr) => expr,
                     None => return,
                 }
@@ -283,9 +360,8 @@ pub(super) fn initial_transformation(
             ),
         };
 
-        // Reuse the old binding node, but the for binding is immutable. The
-        // specification guarantees that the body never writes I.
-        let mut for_pat = ipat.clone();
+        // The for binding is immutable, and assignment-origin loops use a
+        // freshly parsed node (the original local declaration remains).
         match &mut for_pat.kind {
             PatKind::Ident(binding, _, None) => {
                 *binding = BindingAnnotation(ByRef::No, Mutability::Not);
@@ -304,7 +380,18 @@ pub(super) fn initial_transformation(
             "#,
         );
         *orig = replacement.subst(st, cx, &mcx.bindings);
+        if assignment_origin {
+            // Later passes still query the pre-rewrite HIR. Associate the new
+            // loop binding with the old local so accesses inside its copied
+            // body retain exact identity, including in nested scopes.
+            if let Some(expr) = orig.first().and_then(stmt_expr) {
+                if let ExprKind::ForLoop(pat, _, _, _) = &expr.kind {
+                    binding_origins.insert(pat.span, induction_hir_id);
+                }
+            }
+        }
     });
+    binding_origins
 }
 
 // -----------------------------------------------------------------------------
@@ -314,9 +401,6 @@ pub(super) fn initial_transformation(
 #[derive(Clone, Debug)]
 enum TypeInfo {
     Integer(IntegerType),
-    // Preserve source-level type aliases so clause 2.b.vii can distinguish
-    // TYPE_ALIAS-values while still recovering the underlying X type.
-    Alias(Box<TypeInfo>),
     Struct(DefId),
     Pointer(Box<TypeInfo>),
     Array(Box<TypeInfo>),
@@ -364,6 +448,9 @@ struct TypeEnvironment {
     // specification actually forbids.
     forbidden_reference_spans: HashMap<BaseKey, Vec<Span>>,
     mutation_spans: HashMap<BaseKey, Vec<Span>>,
+    // Every resolved use, including uses outside the lexical block containing
+    // the loop, is needed to enforce the post-loop condition of rule 1.
+    local_access_spans: HashMap<HirId, Vec<Span>>,
 
     // For `ref`/`ref mut` patterns we deliberately keep a conservative
     // function-wide guard. If such syntax occurs before or during a candidate
@@ -376,8 +463,8 @@ impl TypeEnvironment {
     fn collect(krate: &Crate, cx: &RefactorCtxt) -> Self {
         let mut env = TypeEnvironment::default();
 
-        // Collect type aliases first so all later source-level type collection
-        // can preserve aliases and recursively resolve their underlying type.
+        // Collect type aliases first so subsequent type collection can resolve
+        // their underlying types recursively, including multi-level aliases.
         // In this rustc_ast version ItemKind::TyAlias contains one TyAlias
         // object whose `ty` field holds the optional target type.
         visit_nodes(krate, |item: &Item| {
@@ -634,6 +721,15 @@ fn type_info_from_ty(
     cx: &RefactorCtxt,
     type_aliases: &HashMap<DefId, P<Ty>>,
 ) -> Option<TypeInfo> {
+    type_info_from_ty_inner(ty, cx, type_aliases, &mut HashSet::new())
+}
+
+fn type_info_from_ty_inner(
+    ty: &Ty,
+    cx: &RefactorCtxt,
+    type_aliases: &HashMap<DefId, P<Ty>>,
+    visiting: &mut HashSet<DefId>,
+) -> Option<TypeInfo> {
     if let Some(integer) = integer_type_from_ty(ty) {
         return Some(TypeInfo::Integer(integer));
     }
@@ -642,18 +738,20 @@ fn type_info_from_ty(
         TyKind::Path(None, _) => {
             let id = cx.try_resolve_ty(ty)?;
             if let Some(alias_ty) = type_aliases.get(&id) {
-                let underlying = type_info_from_ty(alias_ty, cx, type_aliases)?;
-                Some(TypeInfo::Alias(Box::new(underlying)))
+                if !visiting.insert(id) { return None; }
+                let resolved = type_info_from_ty_inner(alias_ty, cx, type_aliases, visiting);
+                visiting.remove(&id);
+                resolved
             } else {
                 Some(TypeInfo::Struct(id))
             }
         }
         TyKind::Ptr(mut_ty) => {
-            let inner = type_info_from_ty(&mut_ty.ty, cx, type_aliases)?;
+            let inner = type_info_from_ty_inner(&mut_ty.ty, cx, type_aliases, visiting)?;
             Some(TypeInfo::Pointer(Box::new(inner)))
         }
         TyKind::Array(element, _) => {
-            let inner = type_info_from_ty(element, cx, type_aliases)?;
+            let inner = type_info_from_ty_inner(element, cx, type_aliases, visiting)?;
             Some(TypeInfo::Array(Box::new(inner)))
         }
         _ => None,
@@ -663,7 +761,6 @@ fn type_info_from_ty(
 fn underlying_integer_type(type_info: &TypeInfo) -> Option<IntegerType> {
     match type_info {
         TypeInfo::Integer(integer) => Some(*integer),
-        TypeInfo::Alias(inner) => underlying_integer_type(inner),
         _ => None,
     }
 }
@@ -753,11 +850,8 @@ fn place_key(expr: &Expr, cx: &RefactorCtxt, target: TargetInfo) -> Option<Place
             })
         }
         ExprKind::Index(base, index) => {
-            // Statically determinable array elements admit an unsuffixed
-            // integer literal expression or an integer literal cast expression
-            // (`int as INT_0 as INT_1`). Evaluate the latter with Rust
-            // integer-cast semantics so lossy casts select the correct concrete
-            // element.
+            // A statically determinable array index must be an unsuffixed
+            // integer literal expression (constraint 5.b).
             let mut key = place_key(base, cx, target)?;
             let index = statically_known_array_index_value(index, target)?;
             key.projections.push(PlaceProjection::Index(index));
@@ -775,11 +869,8 @@ fn place_key(expr: &Expr, cx: &RefactorCtxt, target: TargetInfo) -> Option<Place
 
 fn statically_known_array_index_value(index: &Expr, target: TargetInfo) -> Option<IntValue> {
     // For statically determinable array elements, every index expression must
-    // be either an unsuffixed integer literal expression or an integer literal
-    // cast expression (`int as INT_0 as INT_1`). Since the crate has already
-    // type-checked, an index expression occurring here has the type required by
-    // Rust array indexing. Evaluate both casts with normal Rust integer-cast
-    // semantics so lossy casts select the correct concrete index.
+    // be an unsuffixed integer literal expression. Cast expressions are not
+    // statically determinable under the simplified constraints.
     statically_determinable_literal_expression_value(index, target)
 }
 
@@ -848,15 +939,13 @@ fn stable_array_index_projection(
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> Option<PlaceProjection> {
-    // Stable-index forms (1) and (2): an unsuffixed integer literal
-    // expression, or the double-cast form `INDEX_0 as INDEX_TYPE_0 as usize`.
-    // These forms also have a concrete index value, which is retained for
-    // later static determinability.
+    // Stable-index form (1): an unsuffixed integer literal expression.
+    // Retain its concrete value for static determinability.
     if let Some(value) = statically_known_array_index_value(index, target) {
         return Some(PlaceProjection::Index(value));
     }
 
-    // Stable-index form (3): a stable usize-value. The stable X-value
+    // Stable-index form (2): a stable usize-value. The stable X-value
     // classifier recursively validates array-element indices, so constructs
     // such as a[b[i]] terminate
     // naturally at the finite expression tree.
@@ -873,11 +962,11 @@ fn stable_array_index_projection(
         }
     }
 
-    // Stable-index form (4): `INDEX_1 as usize`, where INDEX_1 is a stable
+    // Stable-index form (3): `INDEX as usize`, where INDEX is a stable
     // primitive-integer value. Classifying the operand as a stable X-value
     // proves exactly that integer-valued stability requirement here.
     if let ExprKind::Cast(inner, cast_ty) = &index.kind {
-        if integer_type_from_ty(cast_ty) == Some(IntegerType::Primitive("usize")) {
+        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases) == Some(IntegerType::Primitive("usize")) {
             stable_x_value(
                 inner,
                 while_span,
@@ -943,6 +1032,11 @@ fn collect_stability_syntax_facts(
     // checked separately from rustc's capture information so that only
     // captures by reference are forbidden; captures by value are allowed.
     visit_nodes(krate, |expr: &Expr| {
+        if let ExprKind::Path(..) = &expr.kind {
+            if let Some(Res::Local(hir_id)) = cx.try_resolve_expr_hir(expr) {
+                env.local_access_spans.entry(hir_id).or_default().push(expr.span);
+            }
+        }
         match &expr.kind {
             ExprKind::AddrOf(_, _, operand) => {
                 if let Some(base) = root_base(operand, cx) {
@@ -1019,10 +1113,6 @@ fn is_x_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &Re
         // X-value clause (vi): a value returned by a function whose return
         // type is X. The type equality check above enforces the return type.
         ExprKind::Call(..) => true,
-        // Clause (vii) does not require a new expression shape. A
-        // TYPE_ALIAS-value has one of the X-value shapes above, but its
-        // source-level type is an alias for X. TypeInfo::Alias is recursively
-        // unwrapped by underlying_integer_type above.
         _ => false,
     }
 }
@@ -1035,9 +1125,8 @@ fn stable_x_value(
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> Option<StableXValue> {
-    // Stable X-values may themselves have a source-level type alias for X.
-    // Resolve aliases here just as is_x_value() does, while preserving the
-    // source-level Alias(...) wrapper elsewhere in TypeInfo.
+    // Source-level aliases have already been resolved by the type environment,
+    // so an alias for X is covered by the ordinary X-value cases.
     let type_info = env.type_info_for_expr(expr, cx)?;
     let value_type = underlying_integer_type(&type_info)?;
 
@@ -1073,8 +1162,8 @@ fn stable_x_value(
             .all(|projection| matches!(projection, PlaceProjection::Field(_)));
 
     if is_plain_value {
-        // A plain stable value can be declared through a type alias for the
-        // underlying primitive integer type as well.
+        // A plain stable value must have a primitive integer type; type
+        // aliases have already been resolved to their underlying type.
         if underlying_integer_type(&base_meta.type_info).is_none() {
             return None;
         }
@@ -1097,7 +1186,7 @@ fn stable_x_value(
     // proof. Immutable/const items are accepted directly. Mutable ordinary
     // locals/parameters may be accepted through the corresponding dynamic
     // clauses, but mutable `static` items are never accepted, even when they
-    // are defined inside the function (constraints 4.b.ix / 4.b.xiv require
+    // are defined inside the function (constraints 5.b.ix / 5.b.xiv require
     // the containing array/struct instance to be non-static).
     let needs_dynamic_proof = match place.base {
         BaseKey::Item(_) => match base_meta.origin {
@@ -1175,12 +1264,13 @@ fn classify_start(
     }
 
     if let ExprKind::Cast(inner, cast_ty) = &expr.kind {
-        if integer_type_from_ty(cast_ty) != Some(induction_ty) {
+        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases) != Some(induction_ty) {
             return None;
         }
         let source_type_info = env.type_info_for_expr(inner, cx)?;
         let source_ty = underlying_integer_type(&source_type_info)?;
-        if source_ty == induction_ty || !is_x_value(inner, source_ty, env, cx) {
+        // Rule 3.c also permits an explicit identity cast (_L as T where U0 = T).
+        if !is_x_value(inner, source_ty, env, cx) {
             return None;
         }
         return Some(StartKind::CastValue);
@@ -1257,10 +1347,7 @@ fn classify_bound(
     target: TargetInfo,
     direction: Direction,
 ) -> Option<BoundKind> {
-    // Constraint 4.a: besides the bare/parenthesized unsuffixed literal, C2Rust
-    // may emit `_N0 as U1 as T` (optionally parenthesized as a whole).  U1 only
-    // has to be a primitive integer type.  Per the specification we do not try
-    // to prove that the intermediate cast preserves the value.
+    // Constraint 5.a: only an unsuffixed literal, optionally parenthesized.
     if let Some(value) = bound_literal_value(bound, induction_ty) {
         if !integer_value_fits_type(value, induction_ty, target) {
             return None;
@@ -1292,10 +1379,10 @@ fn classify_bound(
         }
     }
 
-    // Constraints 4.c and 4.d accept one cast to T or a two-cast chain through
+    // Constraints 5.c and 5.d accept one cast to T or a two-cast chain through
     // an arbitrary primitive integer type U2/U3.  One surrounding pair of
     // parentheses around the complete cast expression is also accepted.
-    let cast_chain = bound_cast_chain(bound, induction_ty)?;
+    let cast_chain = bound_cast_chain(bound, induction_ty, env, cx)?;
     let stable_x = stable_x_value(
         cast_chain.base,
         while_span,
@@ -1332,7 +1419,7 @@ fn classify_bound(
         if !integer_value_fits_type(determined_value, stable_x.value_type, target) {
             return None;
         }
-        // For 4.d, n is `_n2 as T`, or `_n2 as U3 as T` when U3 is present.
+        // For 5.d, n is `_n2 as T`, or `_n2 as U3 as T` when U3 is present.
         // Again, no separate value-preservation check is imposed on U3.
         let before_t = match cast_chain.intermediate_ty {
             Some(intermediate_ty) => cast_integer_value(determined_value, intermediate_ty, target),
@@ -1365,6 +1452,7 @@ fn classify_increment(
     expr: &Expr,
     induction_hir_id: HirId,
     induction_ty: IntegerType,
+    env: &TypeEnvironment,
     cx: &RefactorCtxt,
 ) -> Option<IncrementInfo> {
     match &expr.kind {
@@ -1377,7 +1465,7 @@ fn classify_increment(
                 BinOpKind::Sub => StepOperation::Sub,
                 _ => return None,
             };
-            let (step_expr, cast) = strip_step_cast(rhs, induction_ty)?;
+            let (step_expr, cast) = strip_step_cast(rhs, induction_ty, env, cx)?;
             Some(IncrementInfo {
                 operation,
                 step_expr,
@@ -1392,7 +1480,7 @@ fn classify_increment(
             if let ExprKind::Binary(op, left, right) = &rhs.kind {
                 match op.node {
                     BinOpKind::Add if resolves_to_local(left, induction_hir_id, cx) => {
-                        let (step_expr, cast) = strip_step_cast(right, induction_ty)?;
+                        let (step_expr, cast) = strip_step_cast(right, induction_ty, env, cx)?;
                         return Some(IncrementInfo {
                             operation: StepOperation::Add,
                             step_expr,
@@ -1400,7 +1488,7 @@ fn classify_increment(
                         });
                     }
                     BinOpKind::Sub if resolves_to_local(left, induction_hir_id, cx) => {
-                        let (step_expr, cast) = strip_step_cast(right, induction_ty)?;
+                        let (step_expr, cast) = strip_step_cast(right, induction_ty, env, cx)?;
                         return Some(IncrementInfo {
                             operation: StepOperation::Sub,
                             step_expr,
@@ -1408,7 +1496,7 @@ fn classify_increment(
                         });
                     }
                     BinOpKind::Add if resolves_to_local(right, induction_hir_id, cx) => {
-                        let (step_expr, cast) = strip_step_cast(left, induction_ty)?;
+                        let (step_expr, cast) = strip_step_cast(left, induction_ty, env, cx)?;
                         return Some(IncrementInfo {
                             operation: StepOperation::Add,
                             step_expr,
@@ -1431,7 +1519,7 @@ fn classify_increment(
                         "wrapping_sub" => StepOperation::Sub,
                         _ => return None,
                     };
-                    let (step_expr, cast) = strip_step_cast(&args[0], induction_ty)?;
+                    let (step_expr, cast) = strip_step_cast(&args[0], induction_ty, env, cx)?;
                     return Some(IncrementInfo {
                         operation,
                         step_expr,
@@ -1444,7 +1532,7 @@ fn classify_increment(
                 if method == "wrapping_add" && resolves_to_local(&args[0], induction_hir_id, cx) {
                     let receiver = strip_parentheses(receiver);
                     if let ExprKind::Cast(step, cast_ty) = &receiver.kind {
-                        if integer_type_from_ty(cast_ty) == Some(induction_ty) {
+                        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases) == Some(induction_ty) {
                             return Some(IncrementInfo {
                                 operation: StepOperation::Add,
                                 step_expr: step.clone(),
@@ -1461,9 +1549,11 @@ fn classify_increment(
     }
 }
 
-fn strip_step_cast(expr: &P<Expr>, induction_ty: IntegerType) -> Option<(P<Expr>, bool)> {
+fn strip_step_cast(
+    expr: &P<Expr>, induction_ty: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt,
+) -> Option<(P<Expr>, bool)> {
     if let ExprKind::Cast(inner, cast_ty) = &expr.kind {
-        if integer_type_from_ty(cast_ty) == Some(induction_ty) {
+        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases) == Some(induction_ty) {
             return Some((inner.clone(), true));
         }
         // A cast to some other type is not one of the permitted STEP forms.
@@ -1673,6 +1763,31 @@ fn statements_access_local(
     false
 }
 
+fn first_post_loop_access_reset_stmt<'a>(
+    following: &'a [Stmt], tracked: HirId, cx: &RefactorCtxt,
+) -> Option<&'a Stmt> {
+    for stmt in following {
+        if !statements_access_local(std::slice::from_ref(stmt), tracked, cx) {
+            continue;
+        }
+        let expr = match &stmt.kind {
+            StmtKind::Expr(expr) | StmtKind::Semi(expr) => expr,
+            _ => return None,
+        };
+        let (lhs, rhs) = match &expr.kind {
+            ExprKind::Assign(lhs, rhs, _) => (lhs, rhs),
+            _ => return None,
+        };
+        if resolves_to_local(lhs, tracked, cx)
+            && unsuffixed_integer_literal_value(rhs).is_some()
+        {
+            return Some(stmt);
+        }
+        return None;
+    }
+    None
+}
+
 fn statically_determinable_x_value(
     stable_x: &StableXValue,
     preceding: &[Stmt],
@@ -1683,8 +1798,7 @@ fn statically_determinable_x_value(
     // Stable X-values that are array elements may use stable dynamic indices.
     // The stronger statically determinable X-value definition accepts only
     // statically known indices:
-    // an unsuffixed integer literal expression or an integer literal cast
-    // expression (`int as INT_0 as INT_1`).
+    // an unsuffixed integer literal expression.
     if stable_x
         .place
         .projections
@@ -1773,7 +1887,7 @@ fn last_direct_literal_assignment(
         if statement_modifies_place(stmt, place, cx, target) {
             // The latest modification is not the required direct literal
             // initialization/assignment, or another modification occurs after
-            // such an assignment. Either way, constraint 4/5 is not proven.
+            // such an assignment. Either way, constraints 5/6 are not proven.
             return None;
         }
     }
@@ -2048,7 +2162,7 @@ struct InductionDelegate<'tcx> {
     // whether the while statement itself has an AST -> HIR mapping.
     loop_body_hir_ids: Vec<HirId>,
     // HIR expression roots belonging to the original while body, excluding
-    // the final increment statement. Constraint 7 forbids reference/raw
+    // the final increment statement. Constraint 8 forbids reference/raw
     // pointer uses of I only in this region.
     checked_body_hir_ids: Vec<HirId>,
     facts: InductionFacts,
@@ -2077,13 +2191,13 @@ impl<'tcx> InductionDelegate<'tcx> {
 impl<'tcx> Delegate<'tcx> for InductionDelegate<'tcx> {
     fn consume(&mut self, _place: &PlaceWithHirId<'tcx>, _diag_expr_id: HirId) {
         // Plain reads of I are permitted in the condition and in the loop body.
-        // Constraint 8 (no access after the while) is checked separately at
+        // Rule 1 (post-loop access) is checked separately at
         // the AST level below.
     }
 
     fn copy(&mut self, _place: &PlaceWithHirId<'tcx>, _diag_expr_id: HirId) {
         // Reading a Copy value such as an integer induction variable is allowed
-        // by Constraint 7.  Delegate::copy defaults to borrow(Immutable), which
+        // by Constraint 8.  Delegate::copy defaults to borrow(Immutable), which
         // would otherwise make ordinary reads look like forbidden borrows.
     }
 
@@ -2127,13 +2241,31 @@ fn induction_variable_usage_is_safe(
     loop_body_hir_ids: &[HirId],
     checked_body: &[Stmt],
     following: &[Stmt],
+    assignment_origin: bool,
+    while_span: Span,
+    env: &TypeEnvironment,
     cx: &RefactorCtxt,
 ) -> bool {
-    // Constraint 8: after the while, the old induction binding must never be
-    // accessed again. Resolve paths to the exact HirId so a later shadowing
-    // binding with the same source name does not cause a false rejection.
-    if statements_access_local(following, tracked, cx) {
-        return false;
+    // Rule 1: check *all* later references in the original function, including
+    // uses in an outer block. If there is one, the first one must be the LHS
+    // of an immediate direct literal reset in the while's own block.
+    let first_later_access = env.local_access_spans.get(&tracked)
+        .into_iter().flatten()
+        .filter(|span| span.lo() >= while_span.hi())
+        .min_by_key(|span| span.lo());
+    if let Some(first_access) = first_later_access {
+        if !assignment_origin {
+            return false;
+        }
+        let reset_stmt = match first_post_loop_access_reset_stmt(following, tracked, cx) {
+            Some(stmt) => stmt,
+            None => return false,
+        };
+        if first_access.lo() < reset_stmt.span.lo()
+            || first_access.hi() > reset_stmt.span.hi()
+        {
+            return false;
+        }
     }
 
     let tcx = cx.ty_ctxt();
@@ -2249,35 +2381,11 @@ fn body_has_continue_to_loop(body: &Block, target_label: Option<&Label>) -> bool
 // Integer literal arithmetic and ranges
 // -----------------------------------------------------------------------------
 
-fn integer_literal_cast_expression_value(
-    expr: &Expr,
-    target: TargetInfo,
-) -> Option<IntValue> {
-    // Exactly `int as INT_0 as INT_1`, with an unsuffixed integer literal
-    // expression `int` and two primitive-integer cast targets.
-    let (first_cast, int_1_ty) = match &expr.kind {
-        ExprKind::Cast(inner, ty) => (inner, ty),
-        _ => return None,
-    };
-    let int_1_ty = integer_type_from_ty(int_1_ty)?;
-
-    let (literal, int_0_ty) = match &first_cast.kind {
-        ExprKind::Cast(inner, ty) => (inner, ty),
-        _ => return None,
-    };
-    let int_0_ty = integer_type_from_ty(int_0_ty)?;
-
-    let value = unsuffixed_integer_literal_value(literal)?;
-    let value = cast_integer_value(value, int_0_ty, target);
-    Some(cast_integer_value(value, int_1_ty, target))
-}
-
 fn statically_determinable_literal_expression_value(
     expr: &Expr,
-    target: TargetInfo,
+    _target: TargetInfo,
 ) -> Option<IntValue> {
     unsuffixed_integer_literal_value(expr)
-        .or_else(|| integer_literal_cast_expression_value(expr, target))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2289,6 +2397,7 @@ struct BoundCastChain<'a> {
 fn bound_cast_chain<'a>(
     expr: &'a P<Expr>,
     induction_ty: IntegerType,
+    env: &TypeEnvironment, cx: &RefactorCtxt,
 ) -> Option<BoundCastChain<'a>> {
     let cast_expr = match &expr.kind {
         ExprKind::Cast(..) => expr,
@@ -2300,14 +2409,14 @@ fn bound_cast_chain<'a>(
         ExprKind::Cast(inner, outer_ty) => (inner, outer_ty),
         _ => return None,
     };
-    if integer_type_from_ty(outer_ty) != Some(induction_ty) {
+    if underlying_integer_type_from_ty(outer_ty, cx, &env.type_aliases) != Some(induction_ty) {
         return None;
     }
 
     match &inner.kind {
         ExprKind::Cast(base, intermediate_ty) => Some(BoundCastChain {
             base,
-            intermediate_ty: Some(integer_type_from_ty(intermediate_ty)?),
+            intermediate_ty: Some(underlying_integer_type_from_ty(intermediate_ty, cx, &env.type_aliases)?),
         }),
         _ => Some(BoundCastChain {
             base: inner,
@@ -2316,7 +2425,7 @@ fn bound_cast_chain<'a>(
     }
 }
 
-fn bound_literal_value(expr: &P<Expr>, induction_ty: IntegerType) -> Option<IntValue> {
+fn bound_literal_value(expr: &P<Expr>, _induction_ty: IntegerType) -> Option<IntValue> {
     let unparenthesized = match &expr.kind {
         ExprKind::Paren(inner) => inner,
         _ => expr,
@@ -2326,14 +2435,10 @@ fn bound_literal_value(expr: &P<Expr>, induction_ty: IntegerType) -> Option<IntV
         return Some(value);
     }
 
-    // Constraint 4.a permits the casted literal only in the two-cast form
-    // `_N0 as U1 as T` (optionally parenthesized as a whole).
-    let chain = bound_cast_chain(expr, induction_ty)?;
-    chain.intermediate_ty?;
-    unsuffixed_integer_literal_value(chain.base)
+    None
 }
 
-fn literal_bound_operand(expr: &P<Expr>, induction_ty: IntegerType) -> Option<P<Expr>> {
+fn literal_bound_operand(expr: &P<Expr>, _induction_ty: IntegerType) -> Option<P<Expr>> {
     let unparenthesized = match &expr.kind {
         ExprKind::Paren(inner) => inner,
         _ => expr,
@@ -2343,20 +2448,19 @@ fn literal_bound_operand(expr: &P<Expr>, induction_ty: IntegerType) -> Option<P<
         return Some(unparenthesized.clone());
     }
 
-    let chain = bound_cast_chain(expr, induction_ty)?;
-    chain.intermediate_ty?;
-    if unsuffixed_integer_literal_value(chain.base).is_none() {
-        return None;
-    }
-    Some(chain.base.clone())
+    None
 }
 
-fn cast_bound_base_operand(expr: &P<Expr>, induction_ty: IntegerType) -> Option<P<Expr>> {
-    Some(bound_cast_chain(expr, induction_ty)?.base.clone())
+fn cast_bound_base_operand(
+    expr: &P<Expr>, induction_ty: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt,
+) -> Option<P<Expr>> {
+    Some(bound_cast_chain(expr, induction_ty, env, cx)?.base.clone())
 }
 
-fn cast_bound_directly_to_t(expr: &P<Expr>, induction_ty: IntegerType) -> Option<P<Expr>> {
-    let _ = bound_cast_chain(expr, induction_ty)?;
+fn cast_bound_directly_to_t(
+    expr: &P<Expr>, induction_ty: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt,
+) -> Option<P<Expr>> {
+    let _ = bound_cast_chain(expr, induction_ty, env, cx)?;
 
     let mut direct = match &expr.kind {
         ExprKind::Cast(..) => expr.clone(),

@@ -27,6 +27,10 @@ use rustc_middle::ty;
 
 use std::collections::{HashMap, HashSet};
 
+// For bindings newly introduced by an assignment-based initial transformation,
+// keep the original HIR identity of the induction variable for later Phase-3 passes.
+pub(super) type LoopBindingOrigins = HashMap<rustc_span::Span, HirId>;
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct IdiomatizeLoopsOptions {
     pub iterate_arrays_idiomatically: bool,
@@ -88,9 +92,9 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
                 c_longlong_width: 64,
             };
 
-            initial_transformation(st, cx, target_info);
+            let binding_origins = initial_transformation(st, cx, target_info);
             if options.iterate_arrays_idiomatically {
-                iterate_arrays_idiomatically(st, cx, target_info);
+                iterate_arrays_idiomatically(st, cx, target_info, &binding_origins);
             }
             if options.pass_arrays_as_slices {
                 pass_arrays_as_slices(
@@ -98,13 +102,14 @@ pub fn register_idiomatize_loops(reg: &mut Registry) {
                     cx,
                     target_info,
                     options.transform_public_functions,
+                    &binding_origins,
                 );
             }
             if options.index_type_to_usize {
-                index_type_to_usize(st, cx);
+                index_type_to_usize(st, cx, &binding_origins);
             }
             if options.index_based_to_iterator_based {
-                index_based_to_iterator_based(st, cx);
+                index_based_to_iterator_based(st, cx, &binding_origins);
             }
         }))
     });
@@ -439,32 +444,23 @@ pub(super) struct IntegerConstMeta {
     pub value: IntValue,
 }
 
-pub(super) fn collect_public_integer_type_aliases(
+// All alias definitions, regardless of visibility, are needed to resolve
+// primitive integer types through arbitrary alias chains. Visibility checks
+// for public API transformations remain separate from this type resolution.
+pub(super) fn collect_integer_type_aliases(
     krate: &rustc_ast::Crate,
     cx: &RefactorCtxt,
 ) -> HashMap<DefId, P<Ty>> {
-    fn collect(
-        items: &[P<Item>],
-        cx: &RefactorCtxt,
-        aliases: &mut HashMap<DefId, P<Ty>>,
-    ) {
-        for item in items {
-            match &item.kind {
-                ItemKind::TyAlias(alias) if item.vis.kind.is_pub() => {
-                    if let Some(ty) = &alias.ty {
-                        aliases.insert(cx.node_def_id(item.id), ty.clone());
-                    }
-                }
-                ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
-                    collect(module_items, cx, aliases);
-                }
-                _ => {}
+    let mut aliases = HashMap::new();
+    // Unlike a module-only item walk, visit_nodes also finds function-local
+    // type aliases, which can participate in arbitrarily long alias chains.
+    c2rust_refactor::ast_manip::visit_nodes(krate, |item: &Item| {
+        if let ItemKind::TyAlias(alias) = &item.kind {
+            if let Some(ty) = &alias.ty {
+                aliases.insert(cx.node_def_id(item.id), ty.clone());
             }
         }
-    }
-
-    let mut aliases = HashMap::new();
-    collect(&krate.items, cx, &mut aliases);
+    });
     aliases
 }
 
@@ -517,12 +513,24 @@ pub(super) fn underlying_integer_type_from_ty(
     cx: &RefactorCtxt,
     aliases: &HashMap<DefId, P<Ty>>,
 ) -> Option<IntegerType> {
-    if let Some(integer) = integer_type_from_ty(ty) {
-        return Some(integer);
+    fn resolve(
+        ty: &Ty,
+        cx: &RefactorCtxt,
+        aliases: &HashMap<DefId, P<Ty>>,
+        visiting: &mut HashSet<DefId>,
+    ) -> Option<IntegerType> {
+        if let Some(integer) = integer_type_from_ty(ty) {
+            return Some(integer);
+        }
+        let alias_id = cx.try_resolve_ty(ty)?;
+        if !visiting.insert(alias_id) {
+            return None; // Recursive alias.
+        }
+        let result = resolve(aliases.get(&alias_id)?, cx, aliases, visiting);
+        visiting.remove(&alias_id);
+        result
     }
-    let alias_id = cx.try_resolve_ty(ty)?;
-    let target = aliases.get(&alias_id)?;
-    underlying_integer_type_from_ty(target, cx, aliases)
+    resolve(ty, cx, aliases, &mut HashSet::new())
 }
 
 pub(super) fn array_type_with_literal_length(ty: &Ty) -> Option<(P<Ty>, u128)> {
@@ -539,10 +547,12 @@ pub(super) fn array_type_with_literal_length(ty: &Ty) -> Option<(P<Ty>, u128)> {
 pub(super) fn simple_loop_binding(
     pat: &Pat,
     cx: &RefactorCtxt,
+    binding_origins: &LoopBindingOrigins,
 ) -> Option<(Option<HirId>, String)> {
     match pat.kind {
         PatKind::Ident(BindingAnnotation(ByRef::No, Mutability::Not), ident, None) => Some((
-            cx.hir_map().opt_node_to_hir_id(pat.id),
+            cx.hir_map().opt_node_to_hir_id(pat.id)
+                .or_else(|| binding_origins.get(&pat.span).copied()),
             ident.name.to_string(),
         )),
         _ => None,

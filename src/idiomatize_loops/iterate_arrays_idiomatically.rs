@@ -1,9 +1,10 @@
 use super::{
     array_type_with_literal_length, collect_public_integer_consts,
-    collect_public_integer_type_aliases, expr_matches_loop_binding, integer_type_from_ty,
+    collect_integer_type_aliases, expr_matches_loop_binding,
+    underlying_integer_type_from_ty,
     integer_type_source, integer_value_fits_type, simple_loop_binding, strip_parens,
     suffixed_zero_integer_type, unsuffixed_integer_literal_value, IntegerConstMeta, IntValue,
-    IntegerType, TargetInfo,
+    IntegerType, TargetInfo, LoopBindingOrigins,
 };
 
 use c2rust_refactor::command::CommandState;
@@ -37,6 +38,7 @@ struct ArrayMeta {
 #[derive(Default)]
 struct GlobalInfo {
     consts: HashMap<DefId, IntegerConstMeta>,
+    aliases: HashMap<DefId, P<rustc_ast::Ty>>,
     arrays: HashMap<ArrayKey, ArrayMeta>,
 }
 
@@ -52,6 +54,7 @@ pub(super) fn iterate_arrays_idiomatically(
     st: &CommandState,
     cx: &RefactorCtxt,
     target: TargetInfo,
+    binding_origins: &LoopBindingOrigins,
 ) {
     // `initial_transformation` has already run in this Phase-3 command.  rustc's
     // semantic tables still describe the pre-rewrite crate, but the loop body
@@ -64,7 +67,7 @@ pub(super) fn iterate_arrays_idiomatically(
     let global_info = collect_global_info(&snapshot, cx, target);
     let mut plans = Vec::new();
 
-    collect_function_loop_plans(&snapshot.items, &global_info, cx, target, &mut plans);
+    collect_function_loop_plans(&snapshot.items, &global_info, cx, target, binding_origins, &mut plans);
     if plans.is_empty() {
         return;
     }
@@ -79,11 +82,11 @@ pub(super) fn iterate_arrays_idiomatically(
 }
 
 fn collect_global_info(krate: &Crate, cx: &RefactorCtxt, target: TargetInfo) -> GlobalInfo {
-    let aliases = collect_public_integer_type_aliases(krate, cx);
+    let aliases = collect_integer_type_aliases(krate, cx);
     let consts = collect_public_integer_consts(krate, cx, target, &aliases);
     let mut arrays = HashMap::new();
     collect_global_arrays_from_items(&krate.items, cx, &mut arrays);
-    GlobalInfo { consts, arrays }
+    GlobalInfo { consts, arrays, aliases }
 }
 
 fn collect_global_arrays_from_items(
@@ -125,6 +128,7 @@ fn collect_function_loop_plans(
     global_info: &GlobalInfo,
     cx: &RefactorCtxt,
     target: TargetInfo,
+    binding_origins: &LoopBindingOrigins,
     plans: &mut Vec<LoopPlan>,
 ) {
     for item in items {
@@ -134,15 +138,17 @@ fn collect_function_loop_plans(
                     let mut analyzer = FunctionLoopAnalyzer {
                         arrays: global_info.arrays.clone(),
                         consts: &global_info.consts,
+                        aliases: &global_info.aliases,
                         cx,
                         target,
+                        binding_origins,
                         plans,
                     };
                     analyzer.visit_block(body);
                 }
             }
             ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
-                collect_function_loop_plans(module_items, global_info, cx, target, plans);
+                collect_function_loop_plans(module_items, global_info, cx, target, binding_origins, plans);
             }
             _ => {}
         }
@@ -156,6 +162,8 @@ struct FunctionLoopAnalyzer<'data, 'out, 'cx, 'a, 'tcx: 'a> {
     // constraint 2 without relying on spans of the newly generated `for` node.
     arrays: HashMap<ArrayKey, ArrayMeta>,
     consts: &'data HashMap<DefId, IntegerConstMeta>,
+    aliases: &'data HashMap<DefId, P<rustc_ast::Ty>>,
+    binding_origins: &'data LoopBindingOrigins,
     cx: &'cx RefactorCtxt<'a, 'tcx>,
     target: TargetInfo,
     plans: &'out mut Vec<LoopPlan>,
@@ -246,7 +254,7 @@ impl<'ast, 'data, 'out, 'cx, 'a, 'tcx: 'a> Visitor<'ast>
             return;
         }
 
-        if let Some(plan) = analyze_loop(expr, &self.arrays, self.consts, self.cx, self.target) {
+        if let Some(plan) = analyze_loop(expr, &self.arrays, self.consts, self.aliases, self.cx, self.target, self.binding_origins) {
             self.plans.push(plan);
         }
 
@@ -279,31 +287,34 @@ fn analyze_loop(
     expr: &Expr,
     arrays: &HashMap<ArrayKey, ArrayMeta>,
     consts: &HashMap<DefId, IntegerConstMeta>,
+    aliases: &HashMap<DefId, P<rustc_ast::Ty>>,
     cx: &RefactorCtxt,
     target: TargetInfo,
+    binding_origins: &LoopBindingOrigins,
 ) -> Option<LoopPlan> {
     let (pat, iter, body) = match &expr.kind {
         ExprKind::ForLoop(pat, iter, body, _) => (pat, iter, body),
         _ => return None,
     };
-    let (induction_hir, induction_name) = simple_loop_binding(pat, cx)?;
+    let (induction_hir, induction_name) = simple_loop_binding(pat, cx, binding_origins)?;
 
     let (start, end) = match &iter.kind {
         ExprKind::Range(Some(start), Some(end), RangeLimits::HalfOpen) => (start, end),
         _ => return None,
     };
-    let induction_ty = zero_start_type(start, cx)?;
+    let induction_ty = zero_start_type(start, cx, aliases)?;
 
     let accesses = collect_matching_array_accesses(
         body,
         induction_hir,
         &induction_name,
         arrays,
+        aliases,
         cx,
     );
 
     for (array_expr, array_meta) in accesses {
-        if valid_end_bound(end, array_meta.length, induction_ty, consts, cx, target) {
+        if valid_end_bound(end, array_meta.length, induction_ty, consts, aliases, cx, target) {
             return Some(LoopPlan {
                 binding_pat_id: pat.id,
                 binding_pat_span: pat.span,
@@ -316,7 +327,9 @@ fn analyze_loop(
     None
 }
 
-fn zero_start_type(expr: &Expr, _cx: &RefactorCtxt) -> Option<IntegerType> {
+fn zero_start_type(
+    expr: &Expr, cx: &RefactorCtxt, aliases: &HashMap<DefId, P<rustc_ast::Ty>>,
+) -> Option<IntegerType> {
     let expr = strip_parens(expr);
 
     // Constraint 1 permits exactly `0T` or `0 as T`.  The former is handled
@@ -331,7 +344,7 @@ fn zero_start_type(expr: &Expr, _cx: &RefactorCtxt) -> Option<IntegerType> {
             if unsuffixed_integer_literal_value(strip_parens(inner))
                 == Some(IntValue::NonNegative(0)) =>
         {
-            integer_type_from_ty(ty)
+            underlying_integer_type_from_ty(ty, cx, aliases)
         }
         _ => None,
     }
@@ -342,12 +355,14 @@ fn collect_matching_array_accesses(
     induction_hir: Option<HirId>,
     induction_name: &str,
     arrays: &HashMap<ArrayKey, ArrayMeta>,
+    aliases: &HashMap<DefId, P<rustc_ast::Ty>>,
     cx: &RefactorCtxt,
 ) -> Vec<(P<Expr>, ArrayMeta)> {
     struct AccessCollector<'arrays, 'cx, 'a, 'tcx: 'a> {
         induction_hir: Option<HirId>,
         induction_name: &'arrays str,
         arrays: &'arrays HashMap<ArrayKey, ArrayMeta>,
+        aliases: &'arrays HashMap<DefId, P<rustc_ast::Ty>>,
         cx: &'cx RefactorCtxt<'a, 'tcx>,
         found: Vec<(P<Expr>, ArrayMeta)>,
     }
@@ -366,6 +381,7 @@ fn collect_matching_array_accesses(
                     self.induction_hir,
                     self.induction_name,
                     self.cx,
+                    self.aliases,
                 ) {
                     let base_expr = strip_parens(base);
                     if let Some(key) = array_key_for_expr(base_expr, self.cx) {
@@ -386,6 +402,7 @@ fn collect_matching_array_accesses(
         induction_hir,
         induction_name,
         arrays,
+        aliases,
         cx,
         found: Vec::new(),
     };
@@ -398,6 +415,7 @@ fn matches_loop_index(
     induction_hir: Option<HirId>,
     induction_name: &str,
     cx: &RefactorCtxt,
+    aliases: &HashMap<DefId, P<rustc_ast::Ty>>,
 ) -> bool {
     let expr = strip_parens(expr);
     if expr_matches_loop_binding(expr, induction_hir, induction_name, cx) {
@@ -408,7 +426,7 @@ fn matches_loop_index(
         ExprKind::Cast(inner, ty) => (strip_parens(inner), ty),
         _ => return false,
     };
-    integer_type_from_ty(ty) == Some(IntegerType::Primitive("usize"))
+    underlying_integer_type_from_ty(ty, cx, aliases) == Some(IntegerType::Primitive("usize"))
         && expr_matches_loop_binding(inner, induction_hir, induction_name, cx)
 }
 
@@ -417,6 +435,7 @@ fn valid_end_bound(
     array_length: u128,
     induction_ty: IntegerType,
     consts: &HashMap<DefId, IntegerConstMeta>,
+    aliases: &HashMap<DefId, P<rustc_ast::Ty>>,
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> bool {
@@ -428,7 +447,7 @@ fn valid_end_bound(
     let mut current = strip_parens(expr);
     let mut casts = Vec::new();
     while let ExprKind::Cast(inner, ty) = &current.kind {
-        let cast_ty = match integer_type_from_ty(ty) {
+        let cast_ty = match underlying_integer_type_from_ty(ty, cx, aliases) {
             Some(cast_ty) => cast_ty,
             None => return false,
         };
