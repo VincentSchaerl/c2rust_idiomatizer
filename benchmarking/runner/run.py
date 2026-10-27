@@ -25,7 +25,7 @@ from rust_analysis import (
     plain_tool_env,
 )
 from tractor_integration import BUNDLE_ORDER, discover_tractor_cases
-from tractor_tests import run_tractor_vectors, summarize_tests
+from tractor_tests import TOTALS_BANNER, run_tractor_vectors, summarize_tests
 
 
 runner_dir = Path(__file__).resolve().parent
@@ -43,20 +43,11 @@ tractor_metrics_file = reports_dir / "tractor_metrics.txt"
 tractor_tests_file = reports_dir / "tractor_tests.txt"
 tractor_test_logs_dir = reports_dir / "tractor_test_logs"
 
-# Standard Makefile benchmarks, in execution/report order: test first, then A-Z.
+# Standard Makefile benchmarks, in alphabetical execution/report order.
 # Some library projects (libcsv, rgba) supply standalone C test programs.
 # Translate these executables along with their library sources so the same
 # functional checks can be run in the C and Rust variants.
 BENCHMARKS = [
-    {
-        "name": "test",
-        "path": project_root / "test" / "in",
-        "kind": "binary",
-        "make_target": "out/c2rust_idiomatizer_test",
-        "make_runs_binary": False,
-        "executable": "out/c2rust_idiomatizer_test",
-        "main_module": "main",
-    },
     {
         "name": "buffer",
         "path": benchmarks_dir / "buffer",
@@ -164,6 +155,7 @@ METRIC_LABELS = (
     ("raw_pointer_arithmetic", "Raw pointer arithmetic operations"),
     ("raw_pointer_dereferences", "Raw pointer dereferences"),
     ("indexing_operations", "Indexing operations"),
+    ("time_ns", "Time"),
 )
 
 
@@ -180,10 +172,12 @@ class StepError(RuntimeError):
 
 
 def run_step(stage: str, command: list[str], *, cwd: Path | None = None,
-             env: dict[str, str] | None = None) -> str:
-    """Run a command, printing short progress and preserving logs on failures."""
+             env: dict[str, str] | None = None,
+             elapsed_ns: list[int] | None = None) -> str:
+    """Run a command, optionally timing only the subprocess (not setup/logging)."""
     if env is None:
         env = plain_tool_env()
+    started = time.perf_counter_ns() if elapsed_ns is not None else None
     try:
         result = subprocess.run(
             command, cwd=cwd, env=env, stdout=subprocess.PIPE,
@@ -191,10 +185,20 @@ def run_step(stage: str, command: list[str], *, cwd: Path | None = None,
         )
     except OSError as exc:
         raise StepError(stage, command, str(exc)) from exc
+    if started is not None:
+        elapsed_ns.append(time.perf_counter_ns() - started)
     if result.returncode != 0:
         raise StepError(stage, command, result.stdout, result.returncode)
     print(f"  [OK] {stage}", flush=True)
     return result.stdout
+
+
+def timed_step(stage: str, command: list[str], *, cwd: Path | None = None,
+               env: dict[str, str] | None = None) -> tuple[str, int]:
+    """Measure a single C2Rust tool invocation in integer wall-clock nanoseconds."""
+    elapsed_ns = []
+    output = run_step(stage, command, cwd=cwd, env=env, elapsed_ns=elapsed_ns)
+    return output, elapsed_ns[0]
 
 
 def format_rust(directory: Path, stage: str) -> bool:
@@ -436,14 +440,77 @@ def select_cases(argv: list[str] | None = None) -> tuple[list[dict], list, bool,
     return selected_standard, cases, metrics, tests
 
 
+def metric_value(metrics: dict | None, key: str) -> str:
+    if metrics is None or key not in metrics:
+        return "—"
+    value = metrics[key]
+    if key == "for_loop_ratio":
+        return f"{value[0]}/{value[1]}"
+    if key == "time_ns":
+        return f"{value / 1_000_000:,.2f} ms"
+    return f"{value:,}"
+
+
+def change_absolute(transpiled: dict | None, refactored: dict | None, key: str) -> str:
+    """Absolute metric delta, except Time: additional refactoring duration."""
+    if transpiled is None or refactored is None or key not in transpiled or key not in refactored:
+        return "—"
+    before, after = transpiled[key], refactored[key]
+    if key == "time_ns":
+        # Refactoring happens *after* transpilation. Its entire runtime is the
+        # additional cost, not (refactoring runtime - transpilation runtime).
+        return f"{after / 1_000_000:+,.2f} ms" if after else "0.00 ms"
+    if key == "for_loop_ratio":
+        # Numerators are Rust for-loop counts, with a shared original C count.
+        if before[1] != after[1]:
+            return "—"
+        delta = after[0] - before[0]
+    else:
+        delta = after - before
+    return f"{delta:+,}" if delta else "0"
+
+
+def change_relative(transpiled: dict | None, refactored: dict | None, key: str) -> str:
+    """Relative delta, except Time: refactoring/transpilation overhead."""
+    if transpiled is None or refactored is None or key not in transpiled or key not in refactored:
+        return "—"
+    before, after = transpiled[key], refactored[key]
+    if key == "for_loop_ratio":
+        if before[1] != after[1]:
+            return "—"
+        c_for_loops = before[1]
+        if c_for_loops == 0:
+            return "N/A"
+        percentage = (after[0] - before[0]) / c_for_loops * 100
+    elif key == "time_ns":
+        if before == 0:
+            return "—"
+        percentage = after / before * 100
+    else:
+        # With a zero baseline there is no well-defined relative change.
+        if before == 0:
+            return "N/A"
+        percentage = (after - before) / before * 100
+    # Suppress a negative/positive zero after rounding (including tiny deltas).
+    return f"{percentage:+.2f}%" if round(percentage, 2) else "0.00%"
+
+
+def metric_table(transpiled: dict | None, refactored: dict | None) -> list[str]:
+    header = (f"{'Metric':35} {'Transpiled':>16} {'Refactored':>16} "
+              f"{'Change absolute':>20} {'Change relative':>18}")
+    lines = [header, "-" * len(header)]
+    for key, label in METRIC_LABELS:
+        lines.append(f"{label:35} {metric_value(transpiled, key):>16} "
+                     f"{metric_value(refactored, key):>16} "
+                     f"{change_absolute(transpiled, refactored, key):>20} "
+                     f"{change_relative(transpiled, refactored, key):>18}")
+    return lines
+
+
 def standard_report(name: str, kind: str, transpiled: dict, refactored: dict,
                     warnings: list[str]) -> str:
-    """Match original two-column report, with explicit executable/library type."""
-    header = f"{'Metric':35} {'Transpiled':>14} {'Refactored':>14}"
-    lines = [f"=== Benchmark: {name} ({kind}) ===", "", header, "-" * len(header)]
-    for key, label in METRIC_LABELS:
-        lines.append(f"{label:35} {metric_value(transpiled, key):>14} "
-                     f"{metric_value(refactored, key):>14}")
+    lines = [f"=== Benchmark: {name} ({kind}) ===", "",
+             *metric_table(transpiled, refactored)]
     if warnings:
         lines.append("")
         lines.extend(f"Warning: {warning}" for warning in warnings)
@@ -546,7 +613,7 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
     else:
         command += ["--emit-build-files"]
     command += ["--output-dir", str(transpile_dir), str(database)]
-    transpile_output = run_step("C2Rust transpilation", command)
+    transpile_output, transpile_time_ns = timed_step("C2Rust transpilation", command)
     if kind == "binary" and re.search(r"warning:\s*binary not used:", transpile_output, re.I):
         raise RuntimeError(f"C2Rust ignored main module {config['main_module']!r}")
     warnings = []
@@ -570,13 +637,15 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
     shutil.copytree(transpile_dir, refactor_dir, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("target"))
     print("  [OK] Refactoring copy created", flush=True)
+    refactor_time_ns = 0
     for pass_name in REFACTOR_COMMANDS:
-        run_step(f"Refactoring: {pass_name}",
+        _, elapsed_ns = timed_step(f"Refactoring: {pass_name}",
                  [str(c2rust_dir / "c2rust-refactor"), "--cargo", "--plugin-dir",
                   str(plugin_dir), "--plugin-name", "c2rust_idiomatizer",
                   "--rewrite-mode", "inplace", pass_name,
                   *(["transform-public-functions=true"] if pass_name == "idiomatize_loops" else [])],
                  cwd=refactor_dir)
+        refactor_time_ns += elapsed_ns
     if not format_rust(refactor_dir, "Refactored Rust formatting"):
         warnings.append("Refactored Rust: formatting failed; compiled unformatted Rust")
     refactored_output = run_step(
@@ -602,26 +671,15 @@ def process_standard(config: dict, analyzer_exe: Path) -> tuple[dict, dict, list
     print("  [OK] Refactored Rust analysis", flush=True)
     for metrics in (baseline, refactored):
         metrics["for_loop_ratio"] = (metrics["for_loops"], c_for_loops)
+    baseline["time_ns"] = transpile_time_ns
+    refactored["time_ns"] = refactor_time_ns
     print(f"=== Completed: {name} ===", flush=True)
     return baseline, refactored, warnings
 
 
-def metric_value(metrics: dict | None, key: str) -> str:
-    if metrics is None:
-        return "—"
-    value = metrics[key]
-    if key == "for_loop_ratio":
-        return f"{value[0]}/{value[1]}"
-    return f"{value:,}"
-
-
 def case_report(case: dict) -> str:
-    header = f"{'Metric':35} {'Transpiled':>14} {'Refactored':>14}"
     lines = [f"=== Benchmark: {case['name']} ({case['kind']}) ===", "",
-             header, "-" * len(header)]
-    for key, label in METRIC_LABELS:
-        lines.append(f"{label:35} {metric_value(case.get('transpiled'), key):>14} "
-                     f"{metric_value(case.get('refactored'), key):>14}")
+             *metric_table(case.get("transpiled"), case.get("refactored"))]
 
     errors = case.get("errors", [])
     if case.get("error") is not None:
@@ -650,31 +708,47 @@ def sum_metrics(cases: list[dict], variant: str) -> dict | None:
     return sums
 
 
-def totals_report(cases: list[dict]) -> str:
-    """Single paired total: include a case only if both Rust metrics exist."""
+def totals_report(cases: list[dict], heading: str = "TRACTOR benchmarks — totals") -> str:
+    """Aggregate only paired metrics, with an exclusion note scoped to cases."""
     matched = [case for case in cases
                if case.get("transpiled") is not None and case.get("refactored") is not None]
-    transpiled = sum_metrics(matched, "transpiled")
-    refactored = sum_metrics(matched, "refactored")
-    heading = "TRACTOR benchmarks — total"
-    header = f"{'Metric':35} {'Transpiled':>14} {'Refactored':>14}"
-    lines = [f"=== {heading} ===", "", header, "-" * len(header)]
-    for key, label in METRIC_LABELS:
-        lines.append(f"{label:35} {metric_value(transpiled, key):>14} "
-                     f"{metric_value(refactored, key):>14}")
-    excluded = len(cases) - len(matched)
-    lines.extend(["", f"Cases included: {len(matched)} of {len(cases)}."])
+    excluded = [case for case in cases
+                if case.get("transpiled") is None or case.get("refactored") is None]
+    lines = [f"=== {heading} ===", "",
+             *metric_table(sum_metrics(matched, "transpiled"),
+                           sum_metrics(matched, "refactored")),
+             "", f"Cases included: {len(matched)} of {len(cases)}"]
     if excluded:
-        lines.append(f"Note: {excluded} TRACTOR benchmark(s) excluded from this total "
-                     "because not all required variants were analyzed.")
+        lines.append(f"{len(excluded)} cases excluded:")
+        lines.extend(f"- {case['name'].removeprefix('tractor/')}" for case in excluded)
     return "\n".join(lines)
 
 
+def reports_with_totals(reports: list[str], totals: list[str]) -> str:
+    """Separate individual reports from the totals with two blank lines."""
+    before = "\n\n".join(reports)
+    after = "\n\n".join(totals)
+    if before:
+        return before + "\n\n\n" + TOTALS_BANNER + "\n\n\n" + after + "\n"
+    return TOTALS_BANNER + "\n\n\n" + after + "\n"
+
+
+def save_standard_results(reports: list[str], cases: list[dict]) -> None:
+    total = totals_report(cases, "Standard benchmarks — totals")
+    results_file.write_text(reports_with_totals(reports, [total]), encoding="utf-8")
+
+
 def save_results(cases: list[dict]) -> None:
-    """Keep paired totals and partial per-case results after every case."""
+    """Save all case reports and scoped battery/global totals after every case."""
     reports = [case_report(case) for case in cases]
-    reports.append(totals_report(cases))
-    tractor_metrics_file.write_text("\n\n".join(reports) + "\n", encoding="utf-8")
+    totals = []
+    for battery in BUNDLE_ORDER:
+        subset = [case for case in cases
+                  if case.get("bundle", case["name"].split("/")[1]) == battery]
+        if subset:
+            totals.append(totals_report(subset, f"TRACTOR {battery} — totals"))
+    totals.append(totals_report(cases, "TRACTOR benchmarks — totals"))
+    tractor_metrics_file.write_text(reports_with_totals(reports, totals), encoding="utf-8")
 
 
 def short_error(error: Exception) -> str:
@@ -771,7 +845,7 @@ def process_case(case, analyzer_exe: Path | None, progress: dict, *,
     else:
         command.append("--emit-build-files")
     command += ["--output-dir", str(transpile_dir), str(database)]
-    output = run_step(progress["stage"], command)
+    output, transpile_time_ns = timed_step(progress["stage"], command)
     if case.kind == "binary" and re.search(r"warning:\s*binary not used:", output, re.I):
         raise RuntimeError(f"C2Rust ignored main module {main_module!r}")
 
@@ -793,6 +867,7 @@ def process_case(case, analyzer_exe: Path | None, progress: dict, *,
         progress["stage"] = "Transpiled Rust analysis"
         baseline = analyze_rust_project(transpile_dir, analyzer_exe)
         baseline["for_loop_ratio"] = (baseline["for_loops"], c_for_loops)
+        baseline["time_ns"] = transpile_time_ns
         progress["transpiled"] = baseline
         print("  [OK] Transpiled Rust analysis", flush=True)
 
@@ -804,6 +879,7 @@ def process_case(case, analyzer_exe: Path | None, progress: dict, *,
         shutil.copytree(transpile_dir, directory, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("target"))
         print(f"  [OK] {progress['stage']}", flush=True)
+        refactor_time_ns = 0
         for refactor_command in REFACTOR_COMMANDS:
             progress["stage"] = f"{prefix}: {refactor_command}"
             command = [str(c2rust_dir / "c2rust-refactor"), "--cargo",
@@ -812,7 +888,8 @@ def process_case(case, analyzer_exe: Path | None, progress: dict, *,
                        "--rewrite-mode", "inplace", refactor_command]
             if refactor_command == "idiomatize_loops":
                 command.append("transform-public-functions=true")
-            run_step(progress["stage"], command, cwd=directory)
+            _, elapsed_ns = timed_step(progress["stage"], command, cwd=directory)
+            refactor_time_ns += elapsed_ns
 
         progress["stage"] = f"{prefix}: formatting"
         if not format_rust(directory, progress["stage"]):
@@ -828,6 +905,7 @@ def process_case(case, analyzer_exe: Path | None, progress: dict, *,
             progress["stage"] = f"{prefix}: analysis"
             metrics = analyze_rust_project(directory, analyzer_exe)
             metrics["for_loop_ratio"] = (metrics["for_loops"], c_for_loops)
+            metrics["time_ns"] = refactor_time_ns
             progress["refactored"] = metrics
             print(f"  [OK] {progress['stage']}", flush=True)
     except (StepError, OSError, RuntimeError, RustAnalysisError, CAnalysisError) as error:
@@ -874,8 +952,10 @@ def main() -> int:
                     shutil.rmtree(tractor_test_logs_dir)
 
         standard_reports = []
+        standard_cases = []
         collected = []
         failures = 0
+        failed_benchmarks = []
 
         # Always process the standard benchmarks before any TRACTOR battery.
         for config in standards:
@@ -884,17 +964,19 @@ def main() -> int:
                 baseline, refactored, warnings = process_standard(config, analyzer)
                 standard_reports.append(
                     standard_report(name, config["kind"], baseline, refactored, warnings))
+                standard_cases.append({"name": name, "transpiled": baseline,
+                                       "refactored": refactored})
             except Exception as error:
                 # Continue to the next benchmark (but still propagate Ctrl+C).
                 failures += 1
+                failed_benchmarks.append(name)
                 stage = error.stage if isinstance(error, StepError) else "Setup or analysis"
                 print(f"  [FAILED] {name}: {stage}", flush=True)
                 standard_reports.append(
-                    f"=== Benchmark: {name} ({config['kind']}) ===\n\n"
-                    f"Error during {stage}: {short_error(error)}")
-                results_file.write_text("\n\n".join(standard_reports) + "\n", encoding="utf-8")
-            else:
-                results_file.write_text("\n\n".join(standard_reports) + "\n", encoding="utf-8")
+                    standard_report(name, config["kind"], None, None, []) +
+                    f"\n\nError during {stage}: {short_error(error)}")
+                standard_cases.append({"name": name})
+            save_standard_results(standard_reports, standard_cases)
 
         for case in cases:
             progress = {}
@@ -914,9 +996,12 @@ def main() -> int:
                 any(result.status != "complete" for result in test_results.values()))
             failed = error is not None or bool(progress.get("errors")) or tests_failed
             failures += bool(failed)
+            if failed:
+                failed_benchmarks.append(case.case_id)
             collected.append({
                 "name": f"tractor/{case.case_id}",
                 "kind": case.kind,
+                "bundle": case.bundle,
                 **progress,
                 "error": error,
             })
@@ -934,7 +1019,9 @@ def main() -> int:
             if tractor_tests:
                 print(f"TRACTOR test vectors saved in: {tractor_tests_file}")
             print(f"TRACTOR cases processed: {len(collected)}")
-        print(f"Failed benchmarks: {failures}")
+        print(f"Failed Benchmarks: {failures}")
+        for name in failed_benchmarks:
+            print(f"- {name}")
         return 1 if failures else 0
 
     except StepError as exc:

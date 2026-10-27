@@ -16,6 +16,11 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tractor_integration import BUNDLE_ORDER
+
+
+TOTALS_BANNER = "\n".join(("=" * 80, "-" * 36 + " TOTALS " + "-" * 36, "=" * 80))
+
 
 # Per Python benchmark-runner process: the official Nix launcher only needs
 # to import exec_test_vector:latest once, not for every C/Rust variant.
@@ -324,48 +329,74 @@ def run_tractor_vectors(case, variant: str, rust_project: Path | None,
 
 
 def summarize_tests(cases: list[dict]) -> str:
-    """Three-column paired totals, using only cases with all three reports."""
+    """Individual reports plus paired vector totals per battery and overall.
+
+    Only cases with readable reports for all three variants enter a total;
+    missing variants are excluded from their battery and the overall total.
+    """
     variants = (("c", "Original C"), ("transpiled", "Transpiled"),
                 ("refactored", "Refactored"))
     header = f"{'Test vectors':20}" + "".join(f" {label:>21}" for _, label in variants)
-    counts = {key: {field: 0 for field in ("passed", "failed", "skipped")}
-              for key, _ in variants}
+    fields = (("Passed", "passed"), ("Failed", "failed"), ("Skipped", "skipped"))
     lines = []
-    matched = 0
     for case in cases:
         lines.extend([f"=== Benchmark: {case['name']} ({case['kind']}) ===", "",
                       header, "-" * len(header)])
         tests = case.get("vector_tests", {})
-        for label, field_name in (("Passed", "passed"), ("Failed", "failed"),
-                                  ("Skipped", "skipped")):
+        for label, field_name in fields:
             lines.append(f"{label:20}" + "".join(
                 f" {str(getattr(tests[key], field_name)) if key in tests and tests[key].status != 'not run' else '—':>21}"
                 for key, _ in variants))
+        details = []
         for key, label in variants:
             result = tests.get(key)
             if result is None or result.status == "not run":
-                lines.append(f"Not run ({label}): {result.reason if result else 'Build/translation did not complete'}")
+                details.append(f"Not run ({label}): {result.reason if result else 'Build/translation did not complete'}")
             else:
                 if result.reason:
-                    lines.append(f"{label}: {result.reason}")
-                lines.extend(f"{label}: {message}" for message in result.details)
-        if all(key in tests and tests[key].status != "not run" for key, _ in variants):
-            matched += 1
-            for key, _ in variants:
-                for field_name in counts[key]:
-                    counts[key][field_name] += getattr(tests[key], field_name)
+                    details.append(f"{label}: {result.reason}")
+                details.extend(f"{label}: {message}" for message in result.details)
+        if details:
+            lines.append("")
+            lines.extend(details)
         lines.append("")
 
-    lines.extend(["=== TRACTOR test vectors — totals ===", "", header,
-                  "-" * len(header)])
-    for label, field_name in (("Passed", "passed"), ("Failed", "failed"),
-                              ("Skipped", "skipped")):
-        lines.append(f"{label:20}" + "".join(
-            f" {counts[key][field_name]:>21}" for key, _ in variants))
-    lines.append("")
-    lines.append(f"Cases included: {matched} of {len(cases)} (complete three-variant reports).")
-    excluded = len(cases) - matched
-    if excluded:
-        lines.append(f"Note: {excluded} TRACTOR benchmark(s) excluded from totals "
-                     "because a variant has no readable test-vector report.")
+    def totals(subset: list[dict], heading: str) -> list[str]:
+        counts = {key: {field: 0 for _, field in fields} for key, _ in variants}
+        included = []
+        excluded = []
+        for case in subset:
+            tests = case.get("vector_tests", {})
+            if all(key in tests and tests[key].status != "not run" for key, _ in variants):
+                included.append(case)
+                for key, _ in variants:
+                    for _, field in fields:
+                        counts[key][field] += getattr(tests[key], field)
+            else:
+                excluded.append(case)
+        result = [f"=== {heading} ===", "", header, "-" * len(header)]
+        for label, field in fields:
+            result.append(f"{label:20}" + "".join(
+                f" {counts[key][field]:>21}" for key, _ in variants))
+        result.extend(["", f"Cases included: {len(included)} of {len(subset)}"])
+        if excluded:
+            result.append(f"{len(excluded)} cases excluded:")
+            result.extend(f"- {case['name'].removeprefix('tractor/')}" for case in excluded)
+        return result
+
+    # One divider between the final individual report and the first totals.
+    # The final case already ends with one empty line; add one more so
+    # the banner has exactly two empty lines on either side.
+    if cases:
+        lines.append("")
+    lines.extend(TOTALS_BANNER.splitlines())
+    lines.extend(("", ""))
+
+    for battery in BUNDLE_ORDER:
+        subset = [case for case in cases
+                  if case.get("bundle", case["name"].split("/")[1]) == battery]
+        if subset:
+            lines.extend(totals(subset, f"TRACTOR {battery} test vectors — totals"))
+            lines.append("")
+    lines.extend(totals(cases, "TRACTOR test vectors — totals"))
     return "\n".join(lines) + "\n"
