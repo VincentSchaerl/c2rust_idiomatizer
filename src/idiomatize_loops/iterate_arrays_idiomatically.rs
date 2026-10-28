@@ -1,10 +1,9 @@
 use super::{
-    array_type_with_literal_length, collect_public_integer_consts,
-    collect_integer_type_aliases, expr_matches_loop_binding,
-    underlying_integer_type_from_ty,
-    integer_type_source, integer_value_fits_type, simple_loop_binding, strip_parens,
-    suffixed_zero_integer_type, unsuffixed_integer_literal_value, IntegerConstMeta, IntValue,
-    IntegerType, TargetInfo, LoopBindingOrigins,
+    array_type_with_literal_length, collect_integer_type_aliases, collect_public_integer_consts,
+    expr_matches_loop_binding, integer_type_source, integer_value_fits_type, simple_loop_binding,
+    strip_parens, suffixed_zero_integer_type, underlying_integer_type_from_ty,
+    unsuffixed_integer_literal_value, IntValue, IntegerConstMeta, IntegerType, LoopBindingOrigins,
+    TargetInfo,
 };
 
 use c2rust_refactor::command::CommandState;
@@ -67,7 +66,14 @@ pub(super) fn iterate_arrays_idiomatically(
     let global_info = collect_global_info(&snapshot, cx, target);
     let mut plans = Vec::new();
 
-    collect_function_loop_plans(&snapshot.items, &global_info, cx, target, binding_origins, &mut plans);
+    collect_function_loop_plans(
+        &snapshot.items,
+        &global_info,
+        cx,
+        target,
+        binding_origins,
+        &mut plans,
+    );
     if plans.is_empty() {
         return;
     }
@@ -86,7 +92,11 @@ fn collect_global_info(krate: &Crate, cx: &RefactorCtxt, target: TargetInfo) -> 
     let consts = collect_public_integer_consts(krate, cx, target, &aliases);
     let mut arrays = HashMap::new();
     collect_global_arrays_from_items(&krate.items, cx, &mut arrays);
-    GlobalInfo { consts, arrays, aliases }
+    GlobalInfo {
+        consts,
+        arrays,
+        aliases,
+    }
 }
 
 fn collect_global_arrays_from_items(
@@ -148,7 +158,14 @@ fn collect_function_loop_plans(
                 }
             }
             ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) => {
-                collect_function_loop_plans(module_items, global_info, cx, target, binding_origins, plans);
+                collect_function_loop_plans(
+                    module_items,
+                    global_info,
+                    cx,
+                    target,
+                    binding_origins,
+                    plans,
+                );
             }
             _ => {}
         }
@@ -254,7 +271,15 @@ impl<'ast, 'data, 'out, 'cx, 'a, 'tcx: 'a> Visitor<'ast>
             return;
         }
 
-        if let Some(plan) = analyze_loop(expr, &self.arrays, self.consts, self.aliases, self.cx, self.target, self.binding_origins) {
+        if let Some(plan) = analyze_loop(
+            expr,
+            &self.arrays,
+            self.consts,
+            self.aliases,
+            self.cx,
+            self.target,
+            self.binding_origins,
+        ) {
             self.plans.push(plan);
         }
 
@@ -304,17 +329,19 @@ fn analyze_loop(
     };
     let induction_ty = zero_start_type(start, cx, aliases)?;
 
-    let accesses = collect_matching_array_accesses(
-        body,
-        induction_hir,
-        &induction_name,
-        arrays,
-        aliases,
-        cx,
-    );
+    let accesses =
+        collect_matching_array_accesses(body, induction_hir, &induction_name, arrays, aliases, cx);
 
     for (array_expr, array_meta) in accesses {
-        if valid_end_bound(end, array_meta.length, induction_ty, consts, aliases, cx, target) {
+        if valid_end_bound(
+            end,
+            array_meta.length,
+            induction_ty,
+            consts,
+            aliases,
+            cx,
+            target,
+        ) {
             return Some(LoopPlan {
                 binding_pat_id: pat.id,
                 binding_pat_span: pat.span,
@@ -328,7 +355,9 @@ fn analyze_loop(
 }
 
 fn zero_start_type(
-    expr: &Expr, cx: &RefactorCtxt, aliases: &HashMap<DefId, P<rustc_ast::Ty>>,
+    expr: &Expr,
+    cx: &RefactorCtxt,
+    aliases: &HashMap<DefId, P<rustc_ast::Ty>>,
 ) -> Option<IntegerType> {
     let expr = strip_parens(expr);
 
@@ -367,9 +396,7 @@ fn collect_matching_array_accesses(
         found: Vec<(P<Expr>, ArrayMeta)>,
     }
 
-    impl<'ast, 'arrays, 'cx, 'a, 'tcx: 'a> Visitor<'ast>
-        for AccessCollector<'arrays, 'cx, 'a, 'tcx>
-    {
+    impl<'ast, 'arrays, 'cx, 'a, 'tcx: 'a> Visitor<'ast> for AccessCollector<'arrays, 'cx, 'a, 'tcx> {
         fn visit_expr(&mut self, expr: &'ast Expr) {
             if matches!(expr.kind, ExprKind::Closure(..)) {
                 return;
@@ -501,25 +528,21 @@ impl<'plans, 'cx, 'a, 'tcx: 'a> MutVisitor for LoopRewriter<'plans, 'cx, 'a, 'tc
             ExprKind::ForLoop(pat, _, _, _) => self
                 .plans
                 .iter()
-                .find(|plan| {
-                    plan.binding_pat_id == pat.id && plan.binding_pat_span == pat.span
-                })
+                .find(|plan| plan.binding_pat_id == pat.id && plan.binding_pat_span == pat.span)
                 .cloned(),
             _ => None,
         };
 
         if let Some(plan) = plan {
             if let ExprKind::ForLoop(_, iter, _, _) = &mut expr.kind {
-                if let ExprKind::Range(Some(start), Some(end), RangeLimits::HalfOpen) = &mut iter.kind {
+                if let ExprKind::Range(Some(start), Some(end), RangeLimits::HalfOpen) =
+                    &mut iter.kind
+                {
                     // The updated transformation always normalizes the range
                     // start to the unsuffixed literal `0`.
                     *start = self.st.parse_expr(self.cx, "0");
-                    *end = make_array_len_expr(
-                        self.st,
-                        self.cx,
-                        plan.array_expr,
-                        plan.induction_ty,
-                    );
+                    *end =
+                        make_array_len_expr(self.st, self.cx, plan.array_expr, plan.induction_ty);
                 }
             }
         }

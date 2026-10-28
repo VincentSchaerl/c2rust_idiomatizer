@@ -1,7 +1,8 @@
 use super::{
-    array_len_receiver, expr_matches_loop_binding, integer_type_from_ty, integer_type_source,
-    simple_loop_binding, simple_path_name, strip_parens, unsuffixed_integer_literal_value, IntValue,
-    IntegerType, LoopBindingOrigins, collect_integer_type_aliases, underlying_integer_type_from_ty,
+    array_len_receiver, collect_integer_type_aliases, expr_matches_loop_binding,
+    integer_type_from_ty, integer_type_source, simple_loop_binding, simple_path_name, strip_parens,
+    underlying_integer_type_from_ty, unsuffixed_integer_literal_value, IntValue, IntegerType,
+    LoopBindingOrigins,
 };
 
 use c2rust_refactor::command::CommandState;
@@ -9,14 +10,14 @@ use c2rust_refactor::RefactorCtxt;
 
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
-use rustc_ast::visit::{self, Visitor};
-use rustc_ast::{Expr, ExprKind, Item, RangeLimits};
-use rustc_hir::HirId;
-use rustc_hir::def_id::DefId;
-use std::collections::HashMap;
 use rustc_ast::ptr::P as AstP;
+use rustc_ast::visit::{self, Visitor};
 use rustc_ast::Ty;
+use rustc_ast::{Expr, ExprKind, Item, RangeLimits};
+use rustc_hir::def_id::DefId;
+use rustc_hir::HirId;
 use rustc_span::Span;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 struct LoopPlan {
@@ -29,7 +30,9 @@ struct LoopPlan {
 }
 
 pub(super) fn index_type_to_usize(
-    st: &CommandState, cx: &RefactorCtxt, binding_origins: &LoopBindingOrigins,
+    st: &CommandState,
+    cx: &RefactorCtxt,
+    binding_origins: &LoopBindingOrigins,
 ) {
     // This pass deliberately recognizes only the for-loop forms emitted by the
     // preceding idiomatize_loops passes.  The newly created loop shells may not
@@ -84,7 +87,9 @@ pub(super) fn index_type_to_usize(
 }
 
 fn analyze_loop(
-    expr: &Expr, cx: &RefactorCtxt, binding_origins: &LoopBindingOrigins,
+    expr: &Expr,
+    cx: &RefactorCtxt,
+    binding_origins: &LoopBindingOrigins,
     aliases: &HashMap<DefId, AstP<Ty>>,
 ) -> Option<LoopPlan> {
     let (pat, iter, body) = match &expr.kind {
@@ -108,13 +113,7 @@ fn analyze_loop(
     let (array_name, induction_ty) = array_name_and_type_from_end(end, cx, aliases)?;
 
     // Constraint 2: at least one array[I] or array[I as usize].
-    if !body_contains_matching_access(
-        body,
-        &array_name,
-        induction_hir,
-        &induction_name,
-        cx,
-    ) {
+    if !body_contains_matching_access(body, &array_name, induction_hir, &induction_name, cx) {
         return None;
     }
 
@@ -129,7 +128,9 @@ fn analyze_loop(
 }
 
 fn array_name_and_type_from_end(
-    expr: &Expr, cx: &RefactorCtxt, aliases: &HashMap<DefId, AstP<Ty>>,
+    expr: &Expr,
+    cx: &RefactorCtxt,
+    aliases: &HashMap<DefId, AstP<Ty>>,
 ) -> Option<(String, Option<IntegerType>)> {
     let expr = strip_parens(expr);
     let (len_expr, induction_ty) = match &expr.kind {
@@ -165,12 +166,7 @@ fn body_contains_matching_access(
             }
             if let ExprKind::Index(base, index) = &expr.kind {
                 if simple_path_name(base) == Some(self.array_name)
-                    && matches_index(
-                        index,
-                        self.induction_hir,
-                        self.induction_name,
-                        self.cx,
-                    )
+                    && matches_index(index, self.induction_hir, self.induction_name, self.cx)
                 {
                     self.found = true;
                     return;
@@ -228,9 +224,7 @@ impl<'plans, 'cx, 'a, 'tcx: 'a> MutVisitor for LoopRewriter<'plans, 'cx, 'a, 'tc
             ExprKind::ForLoop(pat, _, _, _) => self
                 .plans
                 .iter()
-                .find(|plan| {
-                    plan.binding_pat_id == pat.id && plan.binding_pat_span == pat.span
-                })
+                .find(|plan| plan.binding_pat_id == pat.id && plan.binding_pat_span == pat.span)
                 .cloned(),
             _ => None,
         };
@@ -289,12 +283,7 @@ impl<'name, 'cx, 'a, 'tcx: 'a> MutVisitor for BodyIndexTypeRewriter<'name, 'cx, 
 
         if let Some(induction_ty) = self.induction_ty {
             if induction_ty != IntegerType::Primitive("usize")
-                && expr_matches_loop_binding(
-                    expr,
-                    self.induction_hir,
-                    self.induction_name,
-                    self.cx,
-                )
+                && expr_matches_loop_binding(expr, self.induction_hir, self.induction_name, self.cx)
             {
                 *expr = self.st.parse_expr(
                     self.cx,

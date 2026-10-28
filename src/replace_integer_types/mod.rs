@@ -8,7 +8,6 @@ use rustc_span::symbol::{Ident, Symbol};
 
 use std::collections::HashMap;
 
-
 #[derive(Clone, Debug)]
 struct BitWidths {
     c_char_bits: u32,

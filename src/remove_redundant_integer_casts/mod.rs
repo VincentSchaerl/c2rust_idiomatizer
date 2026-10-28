@@ -4,8 +4,8 @@ use c2rust_refactor::driver::Phase;
 use rustc_ast::mut_visit::{self, MutVisitor};
 use rustc_ast::ptr::P;
 use rustc_ast::{
-    BinOpKind, Block, BorrowKind, Crate, Expr, ExprKind, FnRetTy, ForeignItemKind, Item, ItemKind, LitKind,
-    Local, LocalKind, ModKind, Pat, PatKind, StmtKind, Ty, TyKind, UnOp, VariantData,
+    BinOpKind, Block, BorrowKind, Crate, Expr, ExprKind, FnRetTy, ForeignItemKind, Item, ItemKind,
+    LitKind, Local, LocalKind, ModKind, Pat, PatKind, StmtKind, Ty, TyKind, UnOp, VariantData,
 };
 use rustc_span::Span;
 
@@ -187,8 +187,7 @@ fn remove_redundant_integer_casts(krate: &mut Crate, bit_widths: BitWidths) {
     let struct_fields = collect_struct_fields(krate, &bit_widths, &type_aliases);
     let global_vars = collect_global_vars(krate, &bit_widths, &type_aliases);
     let global_const_arrays = collect_global_const_arrays(krate, &bit_widths, &type_aliases);
-    let function_param_types =
-        collect_function_param_types(krate, &bit_widths, &type_aliases);
+    let function_param_types = collect_function_param_types(krate, &bit_widths, &type_aliases);
     let function_return_types = collect_function_return_types(krate, &bit_widths, &type_aliases);
     let function_contexts = collect_function_contexts(krate, &bit_widths, &type_aliases);
     let mut visitor = RemoveRedundantIntegerCasts {
@@ -254,26 +253,22 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
                 }
                 match item.kind {
                     ItemKind::Static(ref ty, ..) => {
-                        if let Some(type_info) =
-                            type_info_from_ty(
-                                ty,
-                                &self.bit_widths,
-                                &self.type_aliases,
-                                &self.current_module_path,
-                            )
-                        {
+                        if let Some(type_info) = type_info_from_ty(
+                            ty,
+                            &self.bit_widths,
+                            &self.type_aliases,
+                            &self.current_module_path,
+                        ) {
                             self.insert_local_var(item.ident.name.to_string(), type_info);
                         }
                     }
                     ItemKind::Const(_, ref ty, ..) => {
-                        if let Some(type_info) =
-                            type_info_from_ty(
-                                ty,
-                                &self.bit_widths,
-                                &self.type_aliases,
-                                &self.current_module_path,
-                            )
-                        {
+                        if let Some(type_info) = type_info_from_ty(
+                            ty,
+                            &self.bit_widths,
+                            &self.type_aliases,
+                            &self.current_module_path,
+                        ) {
                             self.insert_local_var(item.ident.name.to_string(), type_info);
                         }
                     }
@@ -307,10 +302,7 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
         // name. Recording it as Unknown prevents case 4.m from mistaking a
         // custom Index implementation for the shadowed global array.
         if let Some(name) = local_name(local) {
-            self.insert_local_var(
-                name,
-                expected_type.clone().unwrap_or(TypeInfo::Unknown),
-            );
+            self.insert_local_var(name, expected_type.clone().unwrap_or(TypeInfo::Unknown));
         }
         if let Some(expected_type) = expected_type {
             match local.kind {
@@ -449,11 +441,9 @@ impl MutVisitor for RemoveRedundantIntegerCasts {
             ExprKind::Cast(ref mut inner_expr, ref cast_ty) => {
                 // Case 4.a: in `L as T as U` and `(L as T) as U`, the outer
                 // cast supplies U as the expected type of the inner cast.
-                if let Some(expected_type) = integer_type_from_ty(
-                    cast_ty,
-                    &self.current_module_path,
-                    &self.type_aliases,
-                ) {
+                if let Some(expected_type) =
+                    integer_type_from_ty(cast_ty, &self.current_module_path, &self.type_aliases)
+                {
                     if remove_redundant_literal_cast(
                         inner_expr,
                         expected_type,
@@ -499,12 +489,8 @@ fn remove_redundant_casts_in_item_initializers(
 ) -> bool {
     let mut changed = false;
     for item in items.iter_mut() {
-        changed |= remove_redundant_casts_in_item_initializer(
-            item,
-            bit_widths,
-            type_aliases,
-            module_path,
-        );
+        changed |=
+            remove_redundant_casts_in_item_initializer(item, bit_widths, type_aliases, module_path);
         let item_name = item.ident.name.to_string();
         if let ItemKind::Mod(_, ModKind::Loaded(ref mut module_items, ..)) = item.kind {
             module_path.push(item_name);
@@ -651,19 +637,21 @@ impl RemoveRedundantIntegerCasts {
                     _ => None,
                 }
             }
-            ExprKind::AddrOf(BorrowKind::Ref, _, ref inner) => Some(TypeInfo::Reference(
-                Box::new(self.type_info_for_expr(inner)?),
-            )),
-            ExprKind::AddrOf(BorrowKind::Raw, _, ref inner) => Some(TypeInfo::Pointer(
-                Box::new(self.type_info_for_expr(inner)?),
-            )),
+            ExprKind::AddrOf(BorrowKind::Ref, _, ref inner) => Some(TypeInfo::Reference(Box::new(
+                self.type_info_for_expr(inner)?,
+            ))),
+            ExprKind::AddrOf(BorrowKind::Raw, _, ref inner) => {
+                Some(TypeInfo::Pointer(Box::new(self.type_info_for_expr(inner)?)))
+            }
             ExprKind::Array(ref elements) => Some(TypeInfo::Array(Box::new(
-                elements.first()
+                elements
+                    .first()
                     .and_then(|element| self.type_info_for_expr(element))
                     .unwrap_or(TypeInfo::Unknown),
             ))),
             ExprKind::Repeat(ref element, _) => Some(TypeInfo::Array(Box::new(
-                self.type_info_for_expr(element).unwrap_or(TypeInfo::Unknown),
+                self.type_info_for_expr(element)
+                    .unwrap_or(TypeInfo::Unknown),
             ))),
             ExprKind::Index(ref base, _) => {
                 let base_type = self.type_info_for_expr(base)?;
@@ -1017,7 +1005,8 @@ fn collect_global_const_arrays(
         for item in items {
             match item.kind {
                 ItemKind::Const(_, ref ty, ..) => {
-                    if let Some(info) = type_info_from_ty(ty, bit_widths, type_aliases, module_path) {
+                    if let Some(info) = type_info_from_ty(ty, bit_widths, type_aliases, module_path)
+                    {
                         if array_or_slice_element_type(&info).is_some() {
                             arrays.insert(
                                 qualified_item_name(module_path, &item.ident.name.to_string()),
@@ -1101,10 +1090,7 @@ fn collect_function_param_types_from_items(
                             ));
                         }
                         functions.insert(
-                            qualified_item_name(
-                                module_path,
-                                &foreign_item.ident.name.to_string(),
-                            ),
+                            qualified_item_name(module_path, &foreign_item.ident.name.to_string()),
                             params,
                         );
                     }
@@ -1154,7 +1140,9 @@ fn collect_function_return_types_from_items(
         match item.kind {
             ItemKind::Fn(ref func) => {
                 let return_type = match func.sig.decl.output {
-                    FnRetTy::Ty(ref ty) => type_info_from_ty(ty, bit_widths, type_aliases, module_path),
+                    FnRetTy::Ty(ref ty) => {
+                        type_info_from_ty(ty, bit_widths, type_aliases, module_path)
+                    }
                     FnRetTy::Default(_) => None,
                 };
                 functions.insert(
@@ -1172,10 +1160,7 @@ fn collect_function_return_types_from_items(
                             FnRetTy::Default(_) => None,
                         };
                         functions.insert(
-                            qualified_item_name(
-                                module_path,
-                                &foreign_item.ident.name.to_string(),
-                            ),
+                            qualified_item_name(module_path, &foreign_item.ident.name.to_string()),
                             return_type,
                         );
                     }
@@ -1228,12 +1213,7 @@ fn collect_function_contexts_from_items(
                     let mut params = HashMap::new();
                     for param in &func.sig.decl.inputs {
                         if let Some(type_info) =
-                            type_info_from_ty(
-                                &param.ty,
-                                bit_widths,
-                                type_aliases,
-                                module_path,
-                            )
+                            type_info_from_ty(&param.ty, bit_widths, type_aliases, module_path)
                         {
                             if let Some(name) = pat_name(&param.pat) {
                                 params.insert(name, type_info);
@@ -1241,9 +1221,7 @@ fn collect_function_contexts_from_items(
                         }
                     }
                     let return_type = match func.sig.decl.output {
-                        FnRetTy::Ty(ref ty) => {
-                            integer_type_from_ty(ty, module_path, type_aliases)
-                        }
+                        FnRetTy::Ty(ref ty) => integer_type_from_ty(ty, module_path, type_aliases),
                         FnRetTy::Default(_) => None,
                     };
                     contexts.push((
@@ -1428,30 +1406,53 @@ fn type_info_from_ty_inner(
                     return result;
                 }
             }
-            Some(TypeInfo::Struct(TypePath::from_ast_path(path, module_path)?))
+            Some(TypeInfo::Struct(TypePath::from_ast_path(
+                path,
+                module_path,
+            )?))
         }
         TyKind::Ptr(ref mut_ty) => {
             let pointee = type_info_from_ty_inner(
-                &mut_ty.ty, bit_widths, type_aliases, module_path, resolving,
-            ).unwrap_or(TypeInfo::Unknown);
+                &mut_ty.ty,
+                bit_widths,
+                type_aliases,
+                module_path,
+                resolving,
+            )
+            .unwrap_or(TypeInfo::Unknown);
             Some(TypeInfo::Pointer(Box::new(pointee)))
         }
         TyKind::Rptr(_, ref mut_ty) => {
             let referred = type_info_from_ty_inner(
-                &mut_ty.ty, bit_widths, type_aliases, module_path, resolving,
-            ).unwrap_or(TypeInfo::Unknown);
+                &mut_ty.ty,
+                bit_widths,
+                type_aliases,
+                module_path,
+                resolving,
+            )
+            .unwrap_or(TypeInfo::Unknown);
             Some(TypeInfo::Reference(Box::new(referred)))
         }
         TyKind::Array(ref element_ty, _) => {
             let element = type_info_from_ty_inner(
-                element_ty, bit_widths, type_aliases, module_path, resolving,
-            ).unwrap_or(TypeInfo::Unknown);
+                element_ty,
+                bit_widths,
+                type_aliases,
+                module_path,
+                resolving,
+            )
+            .unwrap_or(TypeInfo::Unknown);
             Some(TypeInfo::Array(Box::new(element)))
         }
         TyKind::Slice(ref element_ty) => {
             let element = type_info_from_ty_inner(
-                element_ty, bit_widths, type_aliases, module_path, resolving,
-            ).unwrap_or(TypeInfo::Unknown);
+                element_ty,
+                bit_widths,
+                type_aliases,
+                module_path,
+                resolving,
+            )
+            .unwrap_or(TypeInfo::Unknown);
             Some(TypeInfo::Slice(Box::new(element)))
         }
         _ => None,
@@ -1489,12 +1490,8 @@ fn integer_type_from_ty_inner(
     }
 
     let alias = type_aliases.get(&alias_key)?;
-    let result = integer_type_from_ty_inner(
-        &alias.target,
-        &alias.module_path,
-        type_aliases,
-        resolving,
-    );
+    let result =
+        integer_type_from_ty_inner(&alias.target, &alias.module_path, type_aliases, resolving);
     resolving.remove(&alias_key);
     result
 }

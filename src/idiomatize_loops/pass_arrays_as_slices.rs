@@ -1,9 +1,10 @@
 use super::{
-    adjusted_reference_mutability, array_type_with_literal_length, collect_pattern_binding_names, collect_public_integer_consts,
-    collect_integer_type_aliases, fresh_name, integer_type_from_ty, integer_type_range_is_subset,
-    integer_type_source, integer_value_fits_type, record_pattern_binding_name, simple_loop_binding, simple_path_name, strip_parens,
-    underlying_integer_type_from_ty, unsuffixed_integer_literal_value, IntegerConstMeta, IntValue,
-    IntegerType, TargetInfo, LoopBindingOrigins,
+    adjusted_reference_mutability, array_type_with_literal_length, collect_integer_type_aliases,
+    collect_pattern_binding_names, collect_public_integer_consts, fresh_name, integer_type_from_ty,
+    integer_type_range_is_subset, integer_type_source, integer_value_fits_type,
+    record_pattern_binding_name, simple_loop_binding, simple_path_name, strip_parens,
+    underlying_integer_type_from_ty, unsuffixed_integer_literal_value, IntValue, IntegerConstMeta,
+    IntegerType, LoopBindingOrigins, TargetInfo,
 };
 
 use c2rust_refactor::ast_manip::visit_nodes;
@@ -16,8 +17,8 @@ use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{
     AngleBracketedArg, BindingAnnotation, BorrowKind, ByRef, Crate, Expr, ExprKind, Extern,
-    FnRetTy, ForeignItemKind, GenericArg, GenericArgs, IntTy, Item, ItemKind, LitIntType, LitKind, Local,
-    LocalKind, Mutability, Pat, PatKind, RangeLimits, Ty, TyKind, UintTy, Unsafe,
+    FnRetTy, ForeignItemKind, GenericArg, GenericArgs, IntTy, Item, ItemKind, LitIntType, LitKind,
+    Local, LocalKind, Mutability, Pat, PatKind, RangeLimits, Ty, TyKind, UintTy, Unsafe,
 };
 use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
@@ -184,10 +185,17 @@ pub(super) fn pass_arrays_as_slices(
 fn collect_global_info(krate: &Crate, cx: &RefactorCtxt, target: TargetInfo) -> GlobalInfo {
     let all_aliases = collect_integer_type_aliases(krate, cx);
     let consts = collect_public_integer_consts(krate, cx, target, &all_aliases);
-    GlobalInfo { all_aliases, consts }
+    GlobalInfo {
+        all_aliases,
+        consts,
+    }
 }
 
-fn collect_local_arrays(krate: &Crate, cx: &RefactorCtxt, arrays: &mut HashMap<ArrayKey, ArrayMeta>) {
+fn collect_local_arrays(
+    krate: &Crate,
+    cx: &RefactorCtxt,
+    arrays: &mut HashMap<ArrayKey, ArrayMeta>,
+) {
     visit_nodes(krate, |local: &Local| {
         let ty = match &local.ty {
             Some(ty) => ty,
@@ -209,13 +217,7 @@ fn collect_local_arrays(krate: &Crate, cx: &RefactorCtxt, arrays: &mut HashMap<A
             None => return,
         };
         let key = ArrayKey::Local(hir_id);
-        arrays.insert(
-            key,
-            ArrayMeta {
-                element_ty,
-                length,
-            },
-        );
+        arrays.insert(key, ArrayMeta { element_ty, length });
     });
 }
 
@@ -281,7 +283,11 @@ fn analyze_function(
                 Some(value) => value,
                 None => continue,
             };
-            let length_integer_ty = match underlying_integer_type_from_ty(&length_param.ty, cx, &global_info.all_aliases) {
+            let length_integer_ty = match underlying_integer_type_from_ty(
+                &length_param.ty,
+                cx,
+                &global_info.all_aliases,
+            ) {
                 Some(value) => value,
                 None => continue,
             };
@@ -396,7 +402,6 @@ fn function_is_unsafe_extern_c(func: &rustc_ast::Fn) -> bool {
     }
 }
 
-
 fn item_contains_pub(item: &Item) -> bool {
     !matches!(&item.vis.kind, rustc_ast::VisibilityKind::Inherited)
 }
@@ -499,15 +504,18 @@ fn function_signatures_equivalent(
     {
         return false;
     }
-    return_types_equivalent(&definition.sig.decl.output, &declaration.sig.decl.output, cx)
+    return_types_equivalent(
+        &definition.sig.decl.output,
+        &declaration.sig.decl.output,
+        cx,
+    )
 }
 
 fn return_types_equivalent(left: &FnRetTy, right: &FnRetTy, cx: &RefactorCtxt) -> bool {
     match (left, right) {
         (FnRetTy::Default(_), FnRetTy::Default(_)) => true,
         (FnRetTy::Ty(left), FnRetTy::Ty(right)) => same_type(left, right, cx),
-        (FnRetTy::Default(_), FnRetTy::Ty(ty))
-        | (FnRetTy::Ty(ty), FnRetTy::Default(_)) => {
+        (FnRetTy::Default(_), FnRetTy::Ty(ty)) | (FnRetTy::Ty(ty), FnRetTy::Default(_)) => {
             matches!(&ty.kind, TyKind::Tup(types) if types.is_empty())
         }
     }
@@ -534,9 +542,7 @@ fn fresh_restored_length_name(
         removed_param_hir: HirId,
         cx: &'cx RefactorCtxt<'a, 'tcx>,
     }
-    impl<'ast, 'names, 'cx, 'a, 'tcx: 'a> Visitor<'ast>
-        for BindingCollector<'names, 'cx, 'a, 'tcx>
-    {
+    impl<'ast, 'names, 'cx, 'a, 'tcx: 'a> Visitor<'ast> for BindingCollector<'names, 'cx, 'a, 'tcx> {
         fn visit_pat(&mut self, pat: &'ast Pat) {
             record_pattern_binding_name(pat, self.names);
             visit::walk_pat(self, pat);
@@ -591,7 +597,15 @@ fn analyze_loop(
         _ => return None,
     };
     let induction_ty = zero_start_type(start, cx, aliases)?;
-    let length_use_id = match_length_bound(end, length_hir, length_ty, induction_ty, cx, target, aliases)?;
+    let length_use_id = match_length_bound(
+        end,
+        length_hir,
+        length_ty,
+        induction_ty,
+        cx,
+        target,
+        aliases,
+    )?;
 
     let mut checker = BodyPointerUseChecker {
         array_hir,
@@ -630,7 +644,11 @@ fn analyze_loop(
     })
 }
 
-fn zero_start_type(expr: &Expr, cx: &RefactorCtxt, aliases: &HashMap<DefId, P<Ty>>) -> Option<IntegerType> {
+fn zero_start_type(
+    expr: &Expr,
+    cx: &RefactorCtxt,
+    aliases: &HashMap<DefId, P<Ty>>,
+) -> Option<IntegerType> {
     let expr = strip_parens(expr);
     match &expr.kind {
         ExprKind::Lit(lit) => match lit.kind {
@@ -753,7 +771,9 @@ fn match_pointer_access(
         _ => return None,
     };
     let (segment, receiver, args) = match &inner.kind {
-        ExprKind::MethodCall(segment, receiver, args, _) if segment.ident.name.as_str() == "offset" => {
+        ExprKind::MethodCall(segment, receiver, args, _)
+            if segment.ident.name.as_str() == "offset" =>
+        {
             (segment, strip_parens(receiver), args)
         }
         _ => return None,
@@ -810,7 +830,9 @@ fn matches_induction_as_isize(
             return true;
         }
     }
-    simple_path_name(inner).map(|name| name == induction_name).unwrap_or(false)
+    simple_path_name(inner)
+        .map(|name| name == induction_name)
+        .unwrap_or(false)
 }
 
 struct MutableAccessDetector<'cx, 'a, 'tcx: 'a> {
@@ -868,7 +890,11 @@ fn subtree_contains_any_expr(expr: &Expr, ids: &HashSet<rustc_ast::NodeId>) -> b
     finder.found
 }
 
-fn collect_local_path_uses(body: &rustc_ast::Block, tracked: HirId, cx: &RefactorCtxt) -> HashSet<rustc_ast::NodeId> {
+fn collect_local_path_uses(
+    body: &rustc_ast::Block,
+    tracked: HirId,
+    cx: &RefactorCtxt,
+) -> HashSet<rustc_ast::NodeId> {
     let mut result = HashSet::new();
     visit_nodes(body, |expr: &Expr| {
         if expr_resolves_to_local(expr, tracked, cx) {
@@ -1044,7 +1070,8 @@ fn functions_are_used_only_as_direct_callees(
     visit_nodes(krate, |expr: &Expr| {
         if let ExprKind::Call(callee, _) = &expr.kind {
             let callee = strip_parens(callee);
-            if matches!(cx.try_resolve_expr_hir(callee), Some(Res::Def(_, id)) if target_fns.contains(&id)) {
+            if matches!(cx.try_resolve_expr_hir(callee), Some(Res::Def(_, id)) if target_fns.contains(&id))
+            {
                 direct_callee_ids.insert(callee.id);
             }
         }
@@ -1080,7 +1107,8 @@ fn analyze_all_calls(
     let mut all_target_call_ids = HashSet::new();
     visit_nodes(krate, |expr: &Expr| {
         if let ExprKind::Call(callee, _) = &expr.kind {
-            if matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if target_fns.contains(&id)) {
+            if matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if target_fns.contains(&id))
+            {
                 all_target_call_ids.insert(expr.id);
             }
         }
@@ -1111,7 +1139,8 @@ fn analyze_all_calls(
                 ExprKind::Call(callee, args) => (callee, args),
                 _ => return,
             };
-            if !matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if target_fns.contains(&id)) {
+            if !matches!(cx.try_resolve_expr_hir(strip_parens(callee)), Some(Res::Def(_, id)) if target_fns.contains(&id))
+            {
                 return;
             }
             seen_call_ids.insert(expr.id);
@@ -1472,7 +1501,9 @@ fn size_of_generic_type(expr: &Expr) -> Option<P<Ty>> {
 }
 
 fn type_is_known_non_zero_sized(
-    ty: &Ty, cx: &RefactorCtxt, aliases: &HashMap<DefId, P<Ty>>,
+    ty: &Ty,
+    cx: &RefactorCtxt,
+    aliases: &HashMap<DefId, P<Ty>>,
 ) -> bool {
     // Every primitive integer type accepted by the loop passes has a strictly
     // positive bit width, so size_of::<T>() is known to be non-zero without
@@ -1500,11 +1531,7 @@ fn type_is_known_non_zero_sized(
         .unwrap_or(false)
 }
 
-fn filter_plans_by_aliasing(
-    krate: &Crate,
-    plans: &mut Vec<FunctionPlan>,
-    cx: &RefactorCtxt,
-) {
+fn filter_plans_by_aliasing(krate: &Crate, plans: &mut Vec<FunctionPlan>, cx: &RefactorCtxt) {
     let non_escaping_call_addr_ids = collect_non_escaping_call_addr_ids(krate, cx);
     plans.retain(|plan| {
         function_plan_aliasing_is_safe(plan, krate, &non_escaping_call_addr_ids, cx)
@@ -1552,7 +1579,10 @@ fn collect_non_escaping_call_addr_ids(
             Some(Res::Def(_, id)) => id,
             _ => return,
         };
-        let definition = foreign_to_definition.get(&resolved).copied().unwrap_or(resolved);
+        let definition = foreign_to_definition
+            .get(&resolved)
+            .copied()
+            .unwrap_or(resolved);
 
         for (index, arg) in args.iter().enumerate() {
             if !non_escaping_params.contains(&(definition, index)) {
@@ -1566,10 +1596,7 @@ fn collect_non_escaping_call_addr_ids(
     result
 }
 
-fn collect_foreign_definition_map(
-    krate: &Crate,
-    cx: &RefactorCtxt,
-) -> HashMap<DefId, DefId> {
+fn collect_foreign_definition_map(krate: &Crate, cx: &RefactorCtxt) -> HashMap<DefId, DefId> {
     let mut result = HashMap::new();
 
     visit_nodes(krate, |item: &Item| {
@@ -2006,12 +2033,20 @@ fn type_syntax_key(ty: &Ty, cx: &RefactorCtxt) -> Option<String> {
         }
         TyKind::Ptr(mut_ty) => Some(format!(
             "*{}{}",
-            if mut_ty.mutbl == Mutability::Mut { "mut" } else { "const" },
+            if mut_ty.mutbl == Mutability::Mut {
+                "mut"
+            } else {
+                "const"
+            },
             type_syntax_key(&mut_ty.ty, cx)?
         )),
         TyKind::Rptr(_, mut_ty) => Some(format!(
             "&{}{}",
-            if mut_ty.mutbl == Mutability::Mut { "mut" } else { "" },
+            if mut_ty.mutbl == Mutability::Mut {
+                "mut"
+            } else {
+                ""
+            },
             type_syntax_key(&mut_ty.ty, cx)?
         )),
         _ => None,
@@ -2077,13 +2112,7 @@ fn rewrite_planned_functions(
 ) {
     for item in items {
         if let ItemKind::Mod(_, rustc_ast::ModKind::Loaded(module_items, ..)) = &mut item.kind {
-            rewrite_planned_functions(
-                module_items,
-                plans_by_item,
-                plans_by_foreign_item,
-                st,
-                cx,
-            );
+            rewrite_planned_functions(module_items, plans_by_item, plans_by_foreign_item, st, cx);
             continue;
         }
 
@@ -2097,13 +2126,7 @@ fn rewrite_planned_functions(
                     ForeignItemKind::Fn(func) => func,
                     _ => continue,
                 };
-                rewrite_function_signature(
-                    func,
-                    &plan,
-                    st,
-                    cx,
-                    false,
-                );
+                rewrite_function_signature(func, &plan, st, cx, false);
             }
             continue;
         }
@@ -2215,10 +2238,7 @@ impl<'plan, 'cx, 'a, 'tcx: 'a> MutVisitor for FunctionBodyRewriter<'plan, 'cx, '
     }
 }
 
-fn block_contains_any_expr(
-    block: &rustc_ast::Block,
-    ids: &HashSet<rustc_ast::NodeId>,
-) -> bool {
+fn block_contains_any_expr(block: &rustc_ast::Block, ids: &HashSet<rustc_ast::NodeId>) -> bool {
     struct Finder<'ids> {
         ids: &'ids HashSet<rustc_ast::NodeId>,
         found: bool,

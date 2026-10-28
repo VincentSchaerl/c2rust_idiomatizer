@@ -1,8 +1,8 @@
 use super::{
     integer_type_from_ty, integer_type_width_and_signedness, integer_value_fits_type,
-    underlying_integer_type_from_ty, simple_path_name,
-    unsuffixed_integer_literal_value, unsigned_max_for_bits, CIntegerType, IntValue, IntegerType,
-    TargetInfo, LoopBindingOrigins,
+    simple_path_name, underlying_integer_type_from_ty, unsigned_max_for_bits,
+    unsuffixed_integer_literal_value, CIntegerType, IntValue, IntegerType, LoopBindingOrigins,
+    TargetInfo,
 };
 
 use c2rust_refactor::ast_manip::visit_nodes;
@@ -14,8 +14,8 @@ use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{
     BinOpKind, BindingAnnotation, Block, ByRef, Crate, Expr, ExprKind, FnRetTy, ForeignItemKind,
-    Item, ItemKind, Label, Local, LocalKind, Mutability, Pat, PatKind, Stmt,
-    StmtKind, Ty, TyKind, UnOp,
+    Item, ItemKind, Label, Local, LocalKind, Mutability, Pat, PatKind, Stmt, StmtKind, Ty, TyKind,
+    UnOp,
 };
 use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
@@ -78,7 +78,9 @@ pub(super) fn initial_transformation(
                         None => return,
                     };
                     let induction_ty = match underlying_integer_type_from_ty(
-                        declared_ty, cx, &type_env.type_aliases,
+                        declared_ty,
+                        cx,
+                        &type_env.type_aliases,
                     ) {
                         Some(ty) => ty,
                         None => return,
@@ -87,7 +89,13 @@ pub(super) fn initial_transformation(
                         LocalKind::Init(start) => start.clone(),
                         _ => return,
                     };
-                    (induction_hir_id, induction_ty, start, local.pat.clone(), false)
+                    (
+                        induction_hir_id,
+                        induction_ty,
+                        start,
+                        local.pat.clone(),
+                        false,
+                    )
                 }
                 StmtKind::Expr(expr) | StmtKind::Semi(expr) => {
                     let (lhs, start) = match &expr.kind {
@@ -195,10 +203,11 @@ pub(super) fn initial_transformation(
             StmtKind::Semi(expr) | StmtKind::Expr(expr) => expr,
             _ => return,
         };
-        let increment = match classify_increment(incr_expr, induction_hir_id, induction_ty, &type_env, cx) {
-            Some(increment) => increment,
-            None => return,
-        };
+        let increment =
+            match classify_increment(incr_expr, induction_hir_id, induction_ty, &type_env, cx) {
+                Some(increment) => increment,
+                None => return,
+            };
 
         let step = match classify_step(
             increment,
@@ -253,12 +262,16 @@ pub(super) fn initial_transformation(
             // new for-loop only if no references to it were created beforehand
             // or inside the old while loop, including inferred captures.
             if type_env.has_forbidden_reference_before_or_during(
-                BaseKey::Local(induction_hir_id), while_expr.span,
+                BaseKey::Local(induction_hir_id),
+                while_expr.span,
             ) {
                 return;
             }
             let reference_facts = match local_stability_facts(
-                induction_hir_id, while_expr.span, &loop_body_hir_ids, cx,
+                induction_hir_id,
+                while_expr.span,
+                &loop_body_hir_ids,
+                cx,
             ) {
                 Some(facts) => facts,
                 None => return,
@@ -492,8 +505,7 @@ impl TypeEnvironment {
                 let mut fields = HashMap::new();
                 for field in variant_data.fields() {
                     if let Some(ident) = field.ident {
-                        if let Some(type_info) =
-                            type_info_from_ty(&field.ty, cx, &env.type_aliases)
+                        if let Some(type_info) = type_info_from_ty(&field.ty, cx, &env.type_aliases)
                         {
                             fields.insert(ident.name.to_string(), type_info);
                         }
@@ -535,9 +547,7 @@ impl TypeEnvironment {
             }
             ItemKind::Fn(func) => {
                 if let FnRetTy::Ty(return_ty) = &func.sig.decl.output {
-                    if let Some(type_info) =
-                        type_info_from_ty(return_ty, cx, &env.type_aliases)
-                    {
+                    if let Some(type_info) = type_info_from_ty(return_ty, cx, &env.type_aliases) {
                         env.function_return_types
                             .insert(cx.node_def_id(item.id), type_info);
                     }
@@ -548,9 +558,7 @@ impl TypeEnvironment {
                         Some(value) => value,
                         None => continue,
                     };
-                    if let Some(type_info) =
-                        type_info_from_ty(&param.ty, cx, &env.type_aliases)
-                    {
+                    if let Some(type_info) = type_info_from_ty(&param.ty, cx, &env.type_aliases) {
                         env.locals.insert(
                             hir_id,
                             BaseMeta {
@@ -588,7 +596,10 @@ impl TypeEnvironment {
                 .ty
                 .as_ref()
                 .and_then(|ty| type_info_from_ty(ty, cx, &env.type_aliases))
-                .or_else(|| cx.opt_node_type(local.pat.id).and_then(type_info_from_rustc_ty));
+                .or_else(|| {
+                    cx.opt_node_type(local.pat.id)
+                        .and_then(type_info_from_rustc_ty)
+                });
             if let Some(type_info) = type_info {
                 env.locals.insert(
                     hir_id,
@@ -616,11 +627,7 @@ impl TypeEnvironment {
         self.local_item_ids.contains(&id)
     }
 
-    fn has_forbidden_reference_before_or_during(
-        &self,
-        base: BaseKey,
-        while_span: Span,
-    ) -> bool {
+    fn has_forbidden_reference_before_or_during(&self, base: BaseKey, while_span: Span) -> bool {
         if self
             .forbidden_reference_spans
             .get(&base)
@@ -642,9 +649,9 @@ impl TypeEnvironment {
         self.mutation_spans
             .get(&base)
             .map(|spans| {
-                spans.iter().any(|span| {
-                    while_span.lo() <= span.lo() && span.hi() <= while_span.hi()
-                })
+                spans
+                    .iter()
+                    .any(|span| while_span.lo() <= span.lo() && span.hi() <= while_span.hi())
             })
             .unwrap_or(false)
     }
@@ -738,7 +745,9 @@ fn type_info_from_ty_inner(
         TyKind::Path(None, _) => {
             let id = cx.try_resolve_ty(ty)?;
             if let Some(alias_ty) = type_aliases.get(&id) {
-                if !visiting.insert(id) { return None; }
+                if !visiting.insert(id) {
+                    return None;
+                }
                 let resolved = type_info_from_ty_inner(alias_ty, cx, type_aliases, visiting);
                 visiting.remove(&id);
                 resolved
@@ -895,14 +904,7 @@ fn stable_place_key(
             })
         }
         ExprKind::Index(base, index) => {
-            let mut key = stable_place_key(
-                base,
-                while_span,
-                loop_body_hir_ids,
-                env,
-                cx,
-                target,
-            )?;
+            let mut key = stable_place_key(base, while_span, loop_body_hir_ids, env, cx, target)?;
             let projection = stable_array_index_projection(
                 index,
                 while_span,
@@ -915,14 +917,7 @@ fn stable_place_key(
             Some(key)
         }
         ExprKind::Field(base, ident) => {
-            let mut key = stable_place_key(
-                base,
-                while_span,
-                loop_body_hir_ids,
-                env,
-                cx,
-                target,
-            )?;
+            let mut key = stable_place_key(base, while_span, loop_body_hir_ids, env, cx, target)?;
             key.projections
                 .push(PlaceProjection::Field(ident.name.to_string()));
             Some(key)
@@ -949,14 +944,7 @@ fn stable_array_index_projection(
     // classifier recursively validates array-element indices, so constructs
     // such as a[b[i]] terminate
     // naturally at the finite expression tree.
-    if let Some(stable_x) = stable_x_value(
-        index,
-        while_span,
-        loop_body_hir_ids,
-        env,
-        cx,
-        target,
-    ) {
+    if let Some(stable_x) = stable_x_value(index, while_span, loop_body_hir_ids, env, cx, target) {
         if stable_x.value_type == IntegerType::Primitive("usize") {
             return Some(PlaceProjection::StableIndex);
         }
@@ -966,15 +954,10 @@ fn stable_array_index_projection(
     // primitive-integer value. Classifying the operand as a stable X-value
     // proves exactly that integer-valued stability requirement here.
     if let ExprKind::Cast(inner, cast_ty) = &index.kind {
-        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases) == Some(IntegerType::Primitive("usize")) {
-            stable_x_value(
-                inner,
-                while_span,
-                loop_body_hir_ids,
-                env,
-                cx,
-                target,
-            )?;
+        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases)
+            == Some(IntegerType::Primitive("usize"))
+        {
+            stable_x_value(inner, while_span, loop_body_hir_ids, env, cx, target)?;
             return Some(PlaceProjection::StableIndex);
         }
     }
@@ -996,7 +979,6 @@ fn root_base(expr: &Expr, cx: &RefactorCtxt) -> Option<BaseKey> {
     }
 }
 
-
 fn rustc_ty_is_reference(ty: ty::Ty<'_>) -> bool {
     matches!(ty.kind(), ty::TyKind::Ref(..))
 }
@@ -1014,19 +996,11 @@ fn expression_introduces_autoref(expr: &Expr, cx: &RefactorCtxt) -> bool {
     !rustc_ty_is_reference(original) && rustc_ty_is_reference(adjusted)
 }
 
-fn record_base_span(
-    map: &mut HashMap<BaseKey, Vec<Span>>,
-    base: BaseKey,
-    span: Span,
-) {
+fn record_base_span(map: &mut HashMap<BaseKey, Vec<Span>>, base: BaseKey, span: Span) {
     map.entry(base).or_default().push(span);
 }
 
-fn collect_stability_syntax_facts(
-    krate: &Crate,
-    cx: &RefactorCtxt,
-    env: &mut TypeEnvironment,
-) {
+fn collect_stability_syntax_facts(krate: &Crate, cx: &RefactorCtxt, env: &mut TypeEnvironment) {
     // Explicit `&`, `&mut`, `&raw const`, `&raw mut`, rustc-introduced
     // autoref adjustments, and direct writes. Closure/async captures are
     // checked separately from rustc's capture information so that only
@@ -1034,17 +1008,16 @@ fn collect_stability_syntax_facts(
     visit_nodes(krate, |expr: &Expr| {
         if let ExprKind::Path(..) = &expr.kind {
             if let Some(Res::Local(hir_id)) = cx.try_resolve_expr_hir(expr) {
-                env.local_access_spans.entry(hir_id).or_default().push(expr.span);
+                env.local_access_spans
+                    .entry(hir_id)
+                    .or_default()
+                    .push(expr.span);
             }
         }
         match &expr.kind {
             ExprKind::AddrOf(_, _, operand) => {
                 if let Some(base) = root_base(operand, cx) {
-                    record_base_span(
-                        &mut env.forbidden_reference_spans,
-                        base,
-                        expr.span,
-                    );
+                    record_base_span(&mut env.forbidden_reference_spans, base, expr.span);
                 }
             }
             ExprKind::Assign(lhs, _, _) | ExprKind::AssignOp(_, lhs, _) => {
@@ -1057,11 +1030,7 @@ fn collect_stability_syntax_facts(
 
         if expression_introduces_autoref(expr, cx) {
             if let Some(base) = root_base(expr, cx) {
-                record_base_span(
-                    &mut env.forbidden_reference_spans,
-                    base,
-                    expr.span,
-                );
+                record_base_span(&mut env.forbidden_reference_spans, base, expr.span);
             }
         }
     });
@@ -1092,7 +1061,12 @@ fn collect_stability_syntax_facts(
     collector.visit_crate(krate);
 }
 
-fn is_x_value(expr: &Expr, expected: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt) -> bool {
+fn is_x_value(
+    expr: &Expr,
+    expected: IntegerType,
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
+) -> bool {
     let type_info = match env.type_info_for_expr(expr, cx) {
         Some(type_info) => type_info,
         None => return false,
@@ -1137,24 +1111,17 @@ fn stable_x_value(
         return None;
     }
 
-    let place = stable_place_key(
-        expr,
-        while_span,
-        loop_body_hir_ids,
-        env,
-        cx,
-        target,
-    )?;
+    let place = stable_place_key(expr, while_span, loop_body_hir_ids, env, cx, target)?;
     let base_meta = env.base_meta(place.base)?;
 
     let is_plain_value = place.projections.is_empty();
     let is_array_element = !place.projections.is_empty()
-        && place
-            .projections
-            .iter()
-            .all(|projection| {
-                matches!(projection, PlaceProjection::Index(_) | PlaceProjection::StableIndex)
-            });
+        && place.projections.iter().all(|projection| {
+            matches!(
+                projection,
+                PlaceProjection::Index(_) | PlaceProjection::StableIndex
+            )
+        });
     let is_struct_field = !place.projections.is_empty()
         && place
             .projections
@@ -1293,7 +1260,11 @@ struct ConditionInfo {
     bound: P<Expr>,
 }
 
-fn classify_condition(cond: &Expr, induction_hir_id: HirId, cx: &RefactorCtxt) -> Option<ConditionInfo> {
+fn classify_condition(
+    cond: &Expr,
+    induction_hir_id: HirId,
+    cx: &RefactorCtxt,
+) -> Option<ConditionInfo> {
     let (op, left, right) = match &cond.kind {
         ExprKind::Binary(op, left, right) => (op.node, left, right),
         _ => return None,
@@ -1364,9 +1335,8 @@ fn classify_bound(
     if let Some(stable_x) = stable_x_value(bound, while_span, loop_body_hir_ids, env, cx, target) {
         if stable_x.value_type == induction_ty {
             if direction == Direction::DescendingStrict {
-                let determined_value = statically_determinable_x_value(
-                    &stable_x, preceding, env, cx, target,
-                )?;
+                let determined_value =
+                    statically_determinable_x_value(&stable_x, preceding, env, cx, target)?;
                 if !integer_value_fits_type(determined_value, induction_ty, target) {
                     return None;
                 }
@@ -1394,14 +1364,15 @@ fn classify_bound(
 
     if stable_x.value_type == induction_ty {
         if direction == Direction::DescendingStrict {
-            let determined_value = statically_determinable_x_value(
-                &stable_x, preceding, env, cx, target,
-            )?;
+            let determined_value =
+                statically_determinable_x_value(&stable_x, preceding, env, cx, target)?;
             // If U2 exists, n is the result of `_n1 as U2`.  Do not require
             // that this intermediate cast preserves the value; C2Rust's
             // transpilation guarantees that property for the intended inputs.
             let n = match cast_chain.intermediate_ty {
-                Some(intermediate_ty) => cast_integer_value(determined_value, intermediate_ty, target),
+                Some(intermediate_ty) => {
+                    cast_integer_value(determined_value, intermediate_ty, target)
+                }
                 None => determined_value,
             };
             let plus_one = add_one(n)?;
@@ -1413,9 +1384,8 @@ fn classify_bound(
     }
 
     if direction == Direction::DescendingStrict {
-        let determined_value = statically_determinable_x_value(
-            &stable_x, preceding, env, cx, target,
-        )?;
+        let determined_value =
+            statically_determinable_x_value(&stable_x, preceding, env, cx, target)?;
         if !integer_value_fits_type(determined_value, stable_x.value_type, target) {
             return None;
         }
@@ -1532,7 +1502,9 @@ fn classify_increment(
                 if method == "wrapping_add" && resolves_to_local(&args[0], induction_hir_id, cx) {
                     let receiver = strip_parentheses(receiver);
                     if let ExprKind::Cast(step, cast_ty) = &receiver.kind {
-                        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases) == Some(induction_ty) {
+                        if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases)
+                            == Some(induction_ty)
+                        {
                             return Some(IncrementInfo {
                                 operation: StepOperation::Add,
                                 step_expr: step.clone(),
@@ -1550,7 +1522,10 @@ fn classify_increment(
 }
 
 fn strip_step_cast(
-    expr: &P<Expr>, induction_ty: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt,
+    expr: &P<Expr>,
+    induction_ty: IntegerType,
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
 ) -> Option<(P<Expr>, bool)> {
     if let ExprKind::Cast(inner, cast_ty) = &expr.kind {
         if underlying_integer_type_from_ty(cast_ty, cx, &env.type_aliases) == Some(induction_ty) {
@@ -1580,26 +1555,31 @@ fn classify_step(
     cx: &RefactorCtxt,
     target: TargetInfo,
 ) -> Option<StepInfo> {
-    let (value, source_type) = if let Some(value) = unsuffixed_integer_literal_value(&increment.step_expr) {
-        (value, None)
-    } else {
-        let stable_x = stable_x_value(&increment.step_expr, while_span, loop_body_hir_ids, env, cx, target)?;
-        let determined_value = statically_determinable_x_value(
-            &stable_x, preceding, env, cx, target,
-        )?;
-        if !integer_value_fits_type(determined_value, stable_x.value_type, target) {
-            return None;
-        }
-        (determined_value, Some(stable_x.value_type))
-    };
+    let (value, source_type) =
+        if let Some(value) = unsuffixed_integer_literal_value(&increment.step_expr) {
+            (value, None)
+        } else {
+            let stable_x = stable_x_value(
+                &increment.step_expr,
+                while_span,
+                loop_body_hir_ids,
+                env,
+                cx,
+                target,
+            )?;
+            let determined_value =
+                statically_determinable_x_value(&stable_x, preceding, env, cx, target)?;
+            if !integer_value_fits_type(determined_value, stable_x.value_type, target) {
+                return None;
+            }
+            (determined_value, Some(stable_x.value_type))
+        };
 
     if value.is_zero() || value.abs_magnitude() > unsigned_max_for_bits(target.pointer_width) {
         return None;
     }
 
-    if increment.cast_to_induction_type
-        && !integer_value_fits_type(value, induction_ty, target)
-    {
+    if increment.cast_to_induction_type && !integer_value_fits_type(value, induction_ty, target) {
         // If the increment contains `STEP as T`, `step` must lie within the
         // value range of T.
         return None;
@@ -1683,10 +1663,7 @@ fn collect_following_statements(krate: &Crate) -> HashMap<rustc_ast::NodeId, Vec
     result
 }
 
-fn mapped_expr_hir_ids_in_statements(
-    statements: &[Stmt],
-    cx: &RefactorCtxt,
-) -> Vec<HirId> {
+fn mapped_expr_hir_ids_in_statements(statements: &[Stmt], cx: &RefactorCtxt) -> Vec<HirId> {
     struct ExprIdCollector {
         ids: Vec<rustc_ast::NodeId>,
     }
@@ -1714,11 +1691,7 @@ fn mapped_expr_hir_ids_in_statements(
         .collect()
 }
 
-fn statements_access_local(
-    statements: &[Stmt],
-    target: HirId,
-    cx: &RefactorCtxt,
-) -> bool {
+fn statements_access_local(statements: &[Stmt], target: HirId, cx: &RefactorCtxt) -> bool {
     struct Finder<'cx, 'a, 'tcx: 'a> {
         target: HirId,
         cx: &'cx RefactorCtxt<'a, 'tcx>,
@@ -1764,7 +1737,9 @@ fn statements_access_local(
 }
 
 fn first_post_loop_access_reset_stmt<'a>(
-    following: &'a [Stmt], tracked: HirId, cx: &RefactorCtxt,
+    following: &'a [Stmt],
+    tracked: HirId,
+    cx: &RefactorCtxt,
 ) -> Option<&'a Stmt> {
     for stmt in following {
         if !statements_access_local(std::slice::from_ref(stmt), tracked, cx) {
@@ -1778,9 +1753,7 @@ fn first_post_loop_access_reset_stmt<'a>(
             ExprKind::Assign(lhs, rhs, _) => (lhs, rhs),
             _ => return None,
         };
-        if resolves_to_local(lhs, tracked, cx)
-            && unsuffixed_integer_literal_value(rhs).is_some()
-        {
+        if resolves_to_local(lhs, tracked, cx) && unsuffixed_integer_literal_value(rhs).is_some() {
             return Some(stmt);
         }
         return None;
@@ -1867,9 +1840,7 @@ fn literal_value_from_initializer(
                 .find(|field| field.ident.name.as_str() == field_name.as_str())?;
             literal_value_from_initializer(&field.expr, &projections[1..], target)
         }
-        (_, ExprKind::Paren(inner)) => {
-            literal_value_from_initializer(inner, projections, target)
-        }
+        (_, ExprKind::Paren(inner)) => literal_value_from_initializer(inner, projections, target),
         _ => None,
     }
 }
@@ -1910,11 +1881,7 @@ fn direct_literal_write(
             if local_id != base {
                 return None;
             }
-            literal_value_from_initializer(
-                local_initializer(local)?,
-                &place.projections,
-                target,
-            )
+            literal_value_from_initializer(local_initializer(local)?, &place.projections, target)
         }
         StmtKind::Item(item) => {
             let base = match place.base {
@@ -1952,7 +1919,12 @@ fn local_initializer(local: &Local) -> Option<&P<Expr>> {
     }
 }
 
-fn statement_modifies_place(stmt: &Stmt, target: &PlaceKey, cx: &RefactorCtxt, target_info: TargetInfo) -> bool {
+fn statement_modifies_place(
+    stmt: &Stmt,
+    target: &PlaceKey,
+    cx: &RefactorCtxt,
+    target_info: TargetInfo,
+) -> bool {
     struct Finder<'cx, 'a, 'tcx: 'a> {
         target: &'cx PlaceKey,
         cx: &'cx RefactorCtxt<'a, 'tcx>,
@@ -2009,7 +1981,12 @@ fn statement_modifies_place(stmt: &Stmt, target: &PlaceKey, cx: &RefactorCtxt, t
     finder.found
 }
 
-fn assignment_may_modify_place(lhs: &Expr, target: &PlaceKey, cx: &RefactorCtxt, target_info: TargetInfo) -> bool {
+fn assignment_may_modify_place(
+    lhs: &Expr,
+    target: &PlaceKey,
+    cx: &RefactorCtxt,
+    target_info: TargetInfo,
+) -> bool {
     if root_base(lhs, cx) != Some(target.base) {
         return false;
     }
@@ -2249,8 +2226,11 @@ fn induction_variable_usage_is_safe(
     // Rule 1: check *all* later references in the original function, including
     // uses in an outer block. If there is one, the first one must be the LHS
     // of an immediate direct literal reset in the while's own block.
-    let first_later_access = env.local_access_spans.get(&tracked)
-        .into_iter().flatten()
+    let first_later_access = env
+        .local_access_spans
+        .get(&tracked)
+        .into_iter()
+        .flatten()
         .filter(|span| span.lo() >= while_span.hi())
         .min_by_key(|span| span.lo());
     if let Some(first_access) = first_later_access {
@@ -2261,9 +2241,7 @@ fn induction_variable_usage_is_safe(
             Some(stmt) => stmt,
             None => return false,
         };
-        if first_access.lo() < reset_stmt.span.lo()
-            || first_access.hi() > reset_stmt.span.hi()
-        {
+        if first_access.lo() < reset_stmt.span.lo() || first_access.hi() > reset_stmt.span.hi() {
             return false;
         }
     }
@@ -2339,9 +2317,7 @@ fn body_has_continue_to_loop(body: &Block, target_label: Option<&Label>) -> bool
             let nested_loop_label = match &expr.kind {
                 ExprKind::While(_, _, label)
                 | ExprKind::ForLoop(_, _, _, label)
-                | ExprKind::Loop(_, label) => {
-                    Some(label.as_ref().map(|label| label.ident.name))
-                }
+                | ExprKind::Loop(_, label) => Some(label.as_ref().map(|label| label.ident.name)),
                 _ => None,
             };
 
@@ -2397,7 +2373,8 @@ struct BoundCastChain<'a> {
 fn bound_cast_chain<'a>(
     expr: &'a P<Expr>,
     induction_ty: IntegerType,
-    env: &TypeEnvironment, cx: &RefactorCtxt,
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
 ) -> Option<BoundCastChain<'a>> {
     let cast_expr = match &expr.kind {
         ExprKind::Cast(..) => expr,
@@ -2416,7 +2393,11 @@ fn bound_cast_chain<'a>(
     match &inner.kind {
         ExprKind::Cast(base, intermediate_ty) => Some(BoundCastChain {
             base,
-            intermediate_ty: Some(underlying_integer_type_from_ty(intermediate_ty, cx, &env.type_aliases)?),
+            intermediate_ty: Some(underlying_integer_type_from_ty(
+                intermediate_ty,
+                cx,
+                &env.type_aliases,
+            )?),
         }),
         _ => Some(BoundCastChain {
             base: inner,
@@ -2452,13 +2433,19 @@ fn literal_bound_operand(expr: &P<Expr>, _induction_ty: IntegerType) -> Option<P
 }
 
 fn cast_bound_base_operand(
-    expr: &P<Expr>, induction_ty: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt,
+    expr: &P<Expr>,
+    induction_ty: IntegerType,
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
 ) -> Option<P<Expr>> {
     Some(bound_cast_chain(expr, induction_ty, env, cx)?.base.clone())
 }
 
 fn cast_bound_directly_to_t(
-    expr: &P<Expr>, induction_ty: IntegerType, env: &TypeEnvironment, cx: &RefactorCtxt,
+    expr: &P<Expr>,
+    induction_ty: IntegerType,
+    env: &TypeEnvironment,
+    cx: &RefactorCtxt,
 ) -> Option<P<Expr>> {
     let _ = bound_cast_chain(expr, induction_ty, env, cx)?;
 
@@ -2615,16 +2602,15 @@ fn make_range_expr(
         (true, false, false) => "$start_out:Expr ..= $end_out:Expr",
         (true, false, true) => "($start_out:Expr ..= $end_out:Expr).step_by($step_out:Expr)",
         (true, true, false) => "($start_out:Expr ..= $end_out:Expr).rev()",
-        (true, true, true) => {
-            "($start_out:Expr ..= $end_out:Expr).rev().step_by($step_out:Expr)"
+        (true, true, true) => "($start_out:Expr ..= $end_out:Expr).rev().step_by($step_out:Expr)",
+        (false, true, _) => {
+            unreachable!("reversed initial-transformation ranges are always inclusive")
         }
-        (false, true, _) => unreachable!("reversed initial-transformation ranges are always inclusive"),
     };
 
     let template = mcx.parse_expr(source);
     template.subst(st, cx, &mcx.bindings)
 }
-
 
 fn stmt_expr(stmt: &Stmt) -> Option<&P<Expr>> {
     match &stmt.kind {

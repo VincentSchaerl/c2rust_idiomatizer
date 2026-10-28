@@ -1,7 +1,7 @@
 use super::{
-    adjusted_reference_mutability, array_len_receiver, collect_pattern_binding_names, expr_matches_loop_binding, fresh_name,
-    simple_loop_binding, simple_path_name, strip_parens, unsuffixed_integer_literal_value, IntValue,
-    LoopBindingOrigins,
+    adjusted_reference_mutability, array_len_receiver, collect_pattern_binding_names,
+    expr_matches_loop_binding, fresh_name, simple_loop_binding, simple_path_name, strip_parens,
+    unsuffixed_integer_literal_value, IntValue, LoopBindingOrigins,
 };
 
 use c2rust_refactor::command::CommandState;
@@ -31,7 +31,9 @@ struct LoopPlan {
 }
 
 pub(super) fn index_based_to_iterator_based(
-    st: &CommandState, cx: &RefactorCtxt, binding_origins: &LoopBindingOrigins,
+    st: &CommandState,
+    cx: &RefactorCtxt,
+    binding_origins: &LoopBindingOrigins,
 ) {
     let snapshot = {
         let krate = st.krate();
@@ -227,13 +229,7 @@ fn analyze_loop(
     let receiver = array_len_receiver(end)?;
     let array_name = simple_path_name(receiver)?.to_string();
 
-    let usage = analyze_body_usage(
-        body,
-        &array_name,
-        induction_hir,
-        &induction_name,
-        cx,
-    );
+    let usage = analyze_body_usage(body, &array_name, induction_hir, &induction_name, cx);
     if !usage.valid || usage.access_count == 0 {
         return None;
     }
@@ -336,12 +332,7 @@ fn analyze_body_usage(
                 return;
             }
 
-            if expr_matches_loop_binding(
-                expr,
-                self.induction_hir,
-                self.induction_name,
-                self.cx,
-            ) {
+            if expr_matches_loop_binding(expr, self.induction_hir, self.induction_name, self.cx) {
                 self.usage.other_induction_use = true;
                 return;
             }
@@ -381,9 +372,7 @@ impl<'plans, 'cx, 'a, 'tcx: 'a> MutVisitor for LoopRewriter<'plans, 'cx, 'a, 'tc
             ExprKind::ForLoop(pat, _, _, _) => self
                 .plans
                 .iter()
-                .find(|plan| {
-                    plan.binding_pat_id == pat.id && plan.binding_pat_span == pat.span
-                })
+                .find(|plan| plan.binding_pat_id == pat.id && plan.binding_pat_span == pat.span)
                 .cloned(),
             _ => None,
         };
@@ -398,12 +387,7 @@ impl<'plans, 'cx, 'a, 'tcx: 'a> MutVisitor for LoopRewriter<'plans, 'cx, 'a, 'tc
     }
 }
 
-fn rewrite_loop(
-    expr: &mut P<Expr>,
-    plan: &LoopPlan,
-    st: &CommandState,
-    cx: &RefactorCtxt,
-) {
+fn rewrite_loop(expr: &mut P<Expr>, plan: &LoopPlan, st: &CommandState, cx: &RefactorCtxt) {
     let (pat, iter, body) = match &mut expr.kind {
         ExprKind::ForLoop(pat, iter, body, _) => (pat, iter, body),
         _ => return,

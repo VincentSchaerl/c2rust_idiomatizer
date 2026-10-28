@@ -1,14 +1,14 @@
+mod index_based_to_iterator_based;
+mod index_type_to_usize;
 mod initial_transformation;
 mod iterate_arrays_idiomatically;
 mod pass_arrays_as_slices;
-mod index_type_to_usize;
-mod index_based_to_iterator_based;
 
+use index_based_to_iterator_based::index_based_to_iterator_based;
+use index_type_to_usize::index_type_to_usize;
 use initial_transformation::initial_transformation;
 use iterate_arrays_idiomatically::iterate_arrays_idiomatically;
 use pass_arrays_as_slices::pass_arrays_as_slices;
-use index_type_to_usize::index_type_to_usize;
-use index_based_to_iterator_based::index_based_to_iterator_based;
 
 use c2rust_refactor::command::{DriverCommand, Registry};
 use c2rust_refactor::driver::Phase;
@@ -17,8 +17,8 @@ use c2rust_refactor::RefactorCtxt;
 use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{
-    BindingAnnotation, ByRef, Expr, ExprKind, IntTy, Item, ItemKind, LitIntType, LitKind, Mutability,
-    Pat, PatKind, Ty, TyKind, UintTy, UnOp,
+    BindingAnnotation, ByRef, Expr, ExprKind, IntTy, Item, ItemKind, LitIntType, LitKind,
+    Mutability, Pat, PatKind, Ty, TyKind, UintTy, UnOp,
 };
 use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
@@ -169,36 +169,30 @@ fn validate_options(options: IdiomatizeLoopsOptions) {
         && !options.iterate_arrays_idiomatically
         && !options.pass_arrays_as_slices
     {
-        panic!(
-            concat!(
-                "Invalid arguments for idiomatize_loops: ",
-                "index-type-to-usize=true requires ",
-                "iterate-arrays-idiomatically=true or pass-arrays-as-slices=true. ",
-                "The index-type pass only operates on loops produced by one of those passes."
-            )
-        );
+        panic!(concat!(
+            "Invalid arguments for idiomatize_loops: ",
+            "index-type-to-usize=true requires ",
+            "iterate-arrays-idiomatically=true or pass-arrays-as-slices=true. ",
+            "The index-type pass only operates on loops produced by one of those passes."
+        ));
     }
 
     if options.transform_public_functions && !options.pass_arrays_as_slices {
-        panic!(
-            concat!(
-                "Invalid arguments for idiomatize_loops: ",
-                "transform-public-functions=true requires ",
-                "pass-arrays-as-slices=true. Public-function transformation ",
-                "is part of pass-arrays-as-slices."
-            )
-        );
+        panic!(concat!(
+            "Invalid arguments for idiomatize_loops: ",
+            "transform-public-functions=true requires ",
+            "pass-arrays-as-slices=true. Public-function transformation ",
+            "is part of pass-arrays-as-slices."
+        ));
     }
 
     if options.index_based_to_iterator_based && !options.index_type_to_usize {
-        panic!(
-            concat!(
-                "Invalid arguments for idiomatize_loops: ",
-                "index-based-to-iterator-based=true requires ",
-                "index-type-to-usize=true. Iterator-based loop conversion ",
-                "depends on converting index types to usize first."
-            )
-        );
+        panic!(concat!(
+            "Invalid arguments for idiomatize_loops: ",
+            "index-based-to-iterator-based=true requires ",
+            "index-type-to-usize=true. Iterator-based loop conversion ",
+            "depends on converting index types to usize first."
+        ));
     }
 }
 
@@ -551,7 +545,8 @@ pub(super) fn simple_loop_binding(
 ) -> Option<(Option<HirId>, String)> {
     match pat.kind {
         PatKind::Ident(BindingAnnotation(ByRef::No, Mutability::Not), ident, None) => Some((
-            cx.hir_map().opt_node_to_hir_id(pat.id)
+            cx.hir_map()
+                .opt_node_to_hir_id(pat.id)
                 .or_else(|| binding_origins.get(&pat.span).copied()),
             ident.name.to_string(),
         )),
@@ -581,10 +576,7 @@ pub(super) fn collect_pattern_binding_names(pat: &Pat, names: &mut HashSet<Strin
     collector.visit_pat(pat);
 }
 
-pub(super) fn adjusted_reference_mutability(
-    expr: &Expr,
-    cx: &RefactorCtxt,
-) -> Option<Mutability> {
+pub(super) fn adjusted_reference_mutability(expr: &Expr, cx: &RefactorCtxt) -> Option<Mutability> {
     let original = cx.opt_node_type(expr.id)?;
     let adjusted = cx.opt_adjusted_node_type(expr.id)?;
     if matches!(original.kind(), ty::TyKind::Ref(..)) {
