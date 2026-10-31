@@ -9,9 +9,7 @@ c2rust_dir="$project_root/lib/c2rust/target/release"
 plugin_dir="$project_root/target/release"
 
 rm -rf "$test_dir/out/refactor"
-mkdir -p "$test_dir/out/refactor"
-
-cp -r "$test_dir/out/transpile/"* "$test_dir/out/refactor"
+cp -a "$test_dir/out/transpile/." "$test_dir/out/refactor/"
 cd "$test_dir/out/refactor"
 "$c2rust_dir/c2rust-refactor" \
   --cargo \

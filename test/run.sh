@@ -9,9 +9,8 @@ c2rust_dir="$project_root/lib/c2rust/target/release"
 plugin_dir="$project_root/target/release"
 
 rm -f "$test_dir/in/compile_commands.json"
-rm -rf "$test_dir/out/"*
+rm -rf "$test_dir/out"
 mkdir -p "$test_dir/out/transpile"
-mkdir -p "$test_dir/out/refactor"
 
 make -C "$test_dir/in" clean
 make -C "$test_dir/in" run
@@ -25,7 +24,7 @@ bear --output "$test_dir/in/compile_commands.json" -- make -C "$test_dir/in"
 cargo fmt --manifest-path "$test_dir/out/transpile/Cargo.toml"
 RUSTFLAGS="-Awarnings" cargo run --manifest-path "$test_dir/out/transpile/Cargo.toml"
 
-cp -r "$test_dir/out/transpile/"* "$test_dir/out/refactor"
+cp -a "$test_dir/out/transpile/." "$test_dir/out/refactor/"
 cd "$test_dir/out/refactor"
 "$c2rust_dir/c2rust-refactor" \
   --cargo \
